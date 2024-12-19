@@ -1,10 +1,10 @@
 import math
 
 # the level at which the surface is defined as solid instead of void
-ISO_SURFACE_LEVEL = 5
+ISO_CONTOUR_LEVEL = 5  # 25
 
 # as long as the chunk size equals this any points that can make the surface solid will be within the neighboring 27 cells
-CHUNK_SIZE = ISO_SURFACE_LEVEL
+CHUNK_SIZE = ISO_CONTOUR_LEVEL
 
 # the size and positioning of the calculated area
 SAMPLING_SPACE_SIZE = [100, 100, 100]
@@ -12,6 +12,9 @@ SAMPLING_SPACE_OFFSET = [0, 0, 0]
 
 # the maximum fill depth (to avoid any infinite loops in the case of an error in the code, part, or input settings)
 MAX_FILL_DEPTH = 1000000
+
+# the number of iterations of surface tension to smooth out the surface (the more the better the surface)
+TENSION_ITTERATIONS = 25
 
 
 print("Packages Imported and Setup Complete")
@@ -76,7 +79,7 @@ def FloodFill(point: tuple, distanceField: list, signedGrid: list, sign: int) ->
                 # making sure the point hasn't been sampled yet (making it equal to 0/false/null)
                 if not signedGrid[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]]:
                     # checking if the point is outside the boundary of a surface
-                    if distanceField[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] > ISO_SURFACE_LEVEL:
+                    if distanceField[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] > ISO_CONTOUR_LEVEL:
                         
                         # updating the sign and getting all neighbors to search in the next itteration
                         signedGrid[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] = sign
@@ -118,14 +121,20 @@ def fibonacci_sphere(samples: int):
     return points
 
 
-
+#"""
 newPoints = fibonacci_sphere(175)
 for point in newPoints:
     pointCloud.append([point[0]*25+34, point[1]*25+34, point[2]*25+34])
 newPoints = fibonacci_sphere(75)
 for point in newPoints:
     pointCloud.append([point[0]*11+34, point[1]*11+34, point[2]*11+34])
+#"""
 
+"""
+newPoints = fibonacci_sphere(10)
+for point in newPoints:
+    pointCloud.append([point[0]*14+50, point[1]*14+50, point[2]*14+50])
+#"""
 
 """
 # generating a test cube for the point cloud
@@ -134,7 +143,7 @@ for x in range(8):
         for z in range(8):
             if 7 in [x, y, z] or 0 in [x, y, z]:
                 if [x, y, z] not in pointCloud: pointCloud.append([x*4+20, y*4+20, z*4+20])
-"""
+#"""
 
 
 
@@ -157,7 +166,9 @@ print("Chunking Complete")
 signedDistanceField = []
 
 # calculating the minimum unsigned distance for every point in the structure space/field
+print("Distance Field 0% |                    |", end='\r')
 for x_ in range(SAMPLING_SPACE_SIZE[0]):
+    print(f"Distance Field {round(x_/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x_/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x_/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
     yLayer = []
     for y_ in range(SAMPLING_SPACE_SIZE[1]):
         zLayer = []
@@ -166,7 +177,7 @@ for x_ in range(SAMPLING_SPACE_SIZE[0]):
             x, y, z = x_ + SAMPLING_SPACE_OFFSET[0], y_ + SAMPLING_SPACE_OFFSET[1], z_ + SAMPLING_SPACE_OFFSET[2]
             
             neighboringChunks = GetChunks([x, y, z])
-            nearest = ISO_SURFACE_LEVEL + 9999  # chosing a value out of range of the surface to not conflict with it
+            nearest = ISO_CONTOUR_LEVEL + 9999  # chosing a value out of range of the surface to not conflict with it
             
             # searching through the neighboring points to find the nearest one
             for chunk_ in neighboringChunks:
@@ -185,7 +196,7 @@ for x_ in range(SAMPLING_SPACE_SIZE[0]):
     signedDistanceField.append(yLayer)
 
 
-print("Distance Field Calculated")
+print("\x1b[2KDistance Field Calculated")
 
 
 # generating a new grid to keep track of the sign changes
@@ -195,10 +206,12 @@ signedGrid = [  # an array of 0's the same size as the signedDistanceField
     for x in range(SAMPLING_SPACE_SIZE[0])]
 
 # filling the inital void (the entire perimeter should be void if the program's setup was correctly done and set to encompass the entire point cloud)
-FloodFill([0, 0, 0], signedDistanceField, signedGrid, 1)
+print("Signs Calculated 0% |                    |", end='\r')
+FloodFill([0, 0, 0], signedDistanceField, signedGrid, 1)  # this is the bottle neck
 
 # starting a march across the grid to fill in all reigons
 for x in range(SAMPLING_SPACE_SIZE[0]):
+    print(f"Signs Calculated {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
     for y in range(SAMPLING_SPACE_SIZE[1]):
         # beginning the march
         sign = 1  # the entire perimeter should be void so it's safe to assume it as such
@@ -209,7 +222,7 @@ for x in range(SAMPLING_SPACE_SIZE[0]):
                 sign = signedGrid[x][y][z]
             else:
                 # checking if the point's outside an object
-                if signedDistanceField[x][y][z] > ISO_SURFACE_LEVEL:
+                if signedDistanceField[x][y][z] > ISO_CONTOUR_LEVEL:
                     # flood filling the area
                     sign *= -1  # flipping the sign (this should only run once it's left the bounds of the object's surface)
                     FloodFill([x, y, z], signedDistanceField, signedGrid, sign)
@@ -224,7 +237,79 @@ for x in range(SAMPLING_SPACE_SIZE[0]):
                 signedDistanceField[x][y][z] *= signedGrid[x][y][z]
 
 
-print("Signs Calculated")
+print("\x1b[2KSigns Calculated")
+
+
+# generating surface normals
+normalsGrid = [  # an array of 0's the same size as the signedDistanceField
+    [       [0 for z in range(SAMPLING_SPACE_SIZE[2]-2)]
+        for y in range(SAMPLING_SPACE_SIZE[1]-2)]
+    for x in range(SAMPLING_SPACE_SIZE[0]-2)]
+
+# looping through the entire sample space minus the bounds
+for x_ in range(SAMPLING_SPACE_SIZE[0] - 2):
+    for y_ in range(SAMPLING_SPACE_SIZE[1] - 2):
+        for z_ in range(SAMPLING_SPACE_SIZE[2] - 2):
+            x, y, z = x_ + 1, y_ + 1, z_ + 1  # the grid coordinates for the signedDistanceField
+
+            # calculating the slope across various points
+            difX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x - 1][y][z]) / 2
+            difY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y - 1][z]) / 2
+            difZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z - 1]) / 2
+
+            # calculating the normalized normal
+            l = math.sqrt(difX*difX + difY*difY + difZ*difZ)
+            if l: normal = [difX / l, difY / l, difZ / l]
+            else: normal = [0, 0, 0]
+
+            # filling in the value
+            normalsGrid[x_][y_][z_] = normal
+
+
+print("Normals Calculated")
+
+
+print("Surface Tension Calculated 0% |                    |", end='\r')
+
+# apply surface tension repeadidly to smooth the surface and remove the lumps
+for itteration in range(TENSION_ITTERATIONS):
+    print(f"Surface Tension Calculated {round(itteration/TENSION_ITTERATIONS*100)}% |{'='*round(itteration/TENSION_ITTERATIONS*20)}{' '*(20-round(itteration/TENSION_ITTERATIONS*20))}|", end='\r')
+
+    # looping through the sample space except the bounds
+    for x_ in range(SAMPLING_SPACE_SIZE[0] - 4):
+        for y_ in range(SAMPLING_SPACE_SIZE[1] - 4):
+            for z_ in range(SAMPLING_SPACE_SIZE[2] - 4):
+                x, y, z = x_ + 2, y_ + 2, z_ + 2  # the grid coordinates for the signedDistanceField
+
+                # calculating the new signed distance based on the surface normal
+
+                # improve this with the other missing terms so it doesn't grow unstable and just create noise
+                surfaceTension = (normalsGrid[x][y][z][0] - normalsGrid[x - 2][y][z][0]) / 2 + (normalsGrid[x][y][z][1] - normalsGrid[x][y - 2][z][1]) / 2 + (normalsGrid[x][y][z][2] - normalsGrid[x][y][z - 2][2]) / 2
+                signedDistanceField[x][y][z] = signedDistanceField[x][y][z] + surfaceTension*0.025
+
+    # looping through the entire sample space minus the bounds
+    for x_ in range(SAMPLING_SPACE_SIZE[0] - 2):
+        for y_ in range(SAMPLING_SPACE_SIZE[1] - 2):
+            for z_ in range(SAMPLING_SPACE_SIZE[2] - 2):
+                x, y, z = x_ + 1, y_ + 1, z_ + 1  # the grid coordinates for the signedDistanceField
+
+                # calculating the slope across various points
+                difX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x - 1][y][z]) / 2
+                difY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y - 1][z]) / 2
+                difZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z - 1]) / 2
+
+                # calculating the normalized normal
+                l = math.sqrt(difX*difX + difY*difY + difZ*difZ)
+                if l: normal = [difX / l, difY / l, difZ / l]
+                else: normal = [0, 0, 0]
+
+                # filling in the value
+                normalsGrid[x_][y_][z_] = normal
+
+
+print("\x1b[2KSurface Tension Calculated")
+
+
 
 
 # visulizing the outputed data
@@ -239,24 +324,10 @@ fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
 
 # Extract the isosurface
-verts, faces, normals, values = skimage.measure.marching_cubes(np.array(signedDistanceField), ISO_SURFACE_LEVEL)
+verts, faces, normals, values = skimage.measure.marching_cubes(np.array(signedDistanceField), ISO_CONTOUR_LEVEL)
 
 # Plot the isosurface
 ax.plot_trisurf(verts[:, 0], verts[:, 1], faces, verts[:, 2], cmap='jet', alpha=0.5)
 
 plt.show()
-
-
-
-
-# updating the signed distance field to be signed (using the signed grid to correct the unsigned distances)
-
-
-
-# flood fill
-# create a sign array/grid so it's known where has and hasn't been searched and then altern the signedDistanceField as necessary based on that grid
-# march from left to right. If hit an edge, it's solid, than void, then solid, and alternates. For each of those points flood fill. If a point is already determined then stop flipping and march until there is another void
-
-# generating the signs for the signed distance field (currently it's unsigned)
-
 
