@@ -9,11 +9,11 @@ import json
 
 # determins if the signed distance field is being imported or being calculated from a pcd
 LOADING_DISTANCE_FIELD_SAVE = True
-FIELD_FILE = "objectSaveFibSphere.json"
+FIELD_FILE = "objectSaveFibSphere.json"  # tensioned_
 SAVE_FILE = "objectSave.json"
 
 # the level at which the surface is defined as solid instead of void
-ISO_CONTOUR_LEVEL = 4  # 25
+ISO_CONTOUR_LEVEL = 4
 
 # as long as the chunk size equals this any points that can make the surface solid will be within the neighboring 27 cells
 CHUNK_SIZE = 25#math.ceil(ISO_CONTOUR_LEVEL * 1.5)
@@ -26,14 +26,14 @@ SAMPLING_SPACE_OFFSET = [0, 0, 0]
 MAX_FILL_DEPTH = 1000000
 
 # the number of iterations of surface tension to smooth out the surface (the more the better the surface)
-TENSION_ITTERATIONS = 225#150
+TENSION_ITTERATIONS = 0#50
 
 # the delta time and spacing for various components of the simulation (space and time)
 DELTA_X = 1
 DELTA_Y = 1
 DELTA_Z = 1
 
-DT = 0.005
+DT = 0.0075
 
 
 
@@ -99,7 +99,7 @@ def FloodFill(point: tuple, distanceField: list, signedGrid: list, sign: int) ->
                 # making sure the point hasn't been sampled yet (making it equal to 0/false/null)
                 if not signedGrid[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]]:
                     # checking if the point is outside the boundary of a surface
-                    if distanceField[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] > ISO_CONTOUR_LEVEL:
+                    if distanceField[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] >= ISO_CONTOUR_LEVEL:
                         
                         # updating the sign and getting all neighbors to search in the next itteration
                         signedGrid[neighboringPoint[0]][neighboringPoint[1]][neighboringPoint[2]] = sign
@@ -286,12 +286,170 @@ else:
 
 
 
-
+#######
+"""
 # temporary
 for x in range(SAMPLING_SPACE_SIZE[0]):
     for y in range(SAMPLING_SPACE_SIZE[1]):
         for z in range(SAMPLING_SPACE_SIZE[2]):
             signedDistanceField[x][y][z] = abs(signedDistanceField[x][y][z])
+"""
+
+
+
+
+
+
+
+# finding the exact gradient
+"""
+# generating a new array to fill with the contour
+contourGrid = [  # an array of 0's the same size as the signedDistanceField
+    [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
+        for y in range(SAMPLING_SPACE_SIZE[1])]
+    for x in range(SAMPLING_SPACE_SIZE[0])]
+contours = []
+
+# itterating through the grid and finding the contours
+for x in range(1, SAMPLING_SPACE_SIZE[0] - 1):
+    for y in range(1, SAMPLING_SPACE_SIZE[1] - 1):
+        for z in range(1, SAMPLING_SPACE_SIZE[2] - 1):
+            # checking if the gradient is in a trough indicating the contour
+            minsz = min(signedDistanceField[x][y][z + 1], signedDistanceField[x][y][z - 1])
+            minsy = min(signedDistanceField[x][y + 1][z], signedDistanceField[x][y - 1][z])
+            minsx = min(signedDistanceField[x + 1][y][z], signedDistanceField[x - 1][y][z])
+            if signedDistanceField[x][y][z] < ISO_CONTOUR_LEVEL and signedDistanceField[x][y][z] < max(max(minsz, minsy), minsx):
+                # setting the contour at the position
+                contourGrid[x][y][z] = 1
+                contours.append([x, y, z])
+
+print(f"Contour Grid Created: {len(contours)}")
+
+
+selection = []
+for x in range(SAMPLING_SPACE_SIZE[0]):
+    layer = []
+    for y in range(SAMPLING_SPACE_SIZE[1]):
+        val = contourGrid[x][y][SAMPLING_SPACE_SIZE[2]//2]
+        v = min(max(val * 255, 0), 255)
+        layer.append(v)
+    selection.append(layer)
+
+ImageFromArray(selection, "new_output2.png")
+
+
+
+# generates the surrounding cells that need to be searched
+def GenerateSearches(i: int, pos: tuple) -> list:
+    # [-i - i, -i, -i - i]  # bottom
+    # [-i - i, i, -i - i]  # top
+    # [-i, -i2 - i2, -i - i] # left
+    # [i, -i2 - i2, -i - i]  # right
+    # [-i - i, -i2 - i2, -i]  # back
+    # [-i - i, -i2 - i2, i]  # front
+    searches = []
+    for x in range(-i, i):
+        for z in range(-i, i):  # top/bottom
+            searches.append([x, -i, z])
+            searches.append([x, i, z])
+        
+        for y in range(-i + 1, i - 1):  # back/front
+            searches.append([x, y, -i])
+            searches.append([x, y, i])
+    
+    for y in range(-i + i, i - 1):  # left/right
+        for z in range(-i, i):
+            searches.append([-i, y, z])
+            searches.append([i, y, z])
+    
+    # updating the points based on position
+    for i in range(len(searches)):
+        searches[i] = [searches[i][0] + pos[0], searches[i][1] + pos[1], searches[i][2] + pos[2]]
+    
+    # returning the positions
+    return searches
+
+
+newSignedDistanceField = [  # an array of 0's the same size as the signedDistanceField
+    [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
+        for y in range(SAMPLING_SPACE_SIZE[1])]
+    for x in range(SAMPLING_SPACE_SIZE[0])]
+
+# generating a new signed distance function based on the contour
+for x in range(SAMPLING_SPACE_SIZE[0]):
+    print(f"New Distance Field {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
+    break
+    for y in range(SAMPLING_SPACE_SIZE[1]):
+        for z in range(SAMPLING_SPACE_SIZE[2]):
+            # searching for the nearest point
+            depth = 0
+            nearest = 99999999
+            searches = [[x, y, z]]
+
+            # repeadidly searching and expanding the search until the nearest point is found
+            while searches:
+                found = True
+                for search in searches:
+                    if contourGrid[search[0]][search[1]][search[2]]:
+                        # updating the lowest distance
+                        dst = math.sqrt(pow(search[0] - x, 2.0) + pow(search[1] - y, 2.0) + pow(search[2] - z, 2.0))
+                        nearest = min(nearest, dst)
+                        found = True
+            
+                depth += 1
+                if found:  # checking if the nearest point was found or if the search needs to expand
+                    # checking if there are other possible nearest points
+                    if nearest > depth:
+                        # finding the extended range which needs to be accounted for
+                        dif = math.ceil(nearest - depth)
+                        newSearches = []
+                        for depth2 in range(dif):
+                            newSearches += GenerateSearches(depth + depth2, [x, y, z])
+                        
+                        # going through the new searches
+                        for search2 in newSearches:
+                            if contourGrid[search[0]][search[1]][search[2]]:
+                                # updating the lowest distance
+                                dst = math.sqrt(pow(search2[0] - x, 2.0) + pow(search2[1] - y, 2.0) + pow(search2[2] - z, 2.0))
+                                nearest = min(nearest, dst)
+
+                    # ending the search
+                    break
+                else:
+                    searches = GenerateSearches(depth, [x, y, z])
+
+            nearest = 99999
+            for contour in contours:
+                dst = math.sqrt(pow(contour[0] - x, 2.0) + pow(contour[1] - y, 2.0) + pow(contour[2] - z, 2.0))
+                nearest = min(nearest, dst)
+
+            # updating the distance
+            newSignedDistanceField[x][y][z] = nearest
+"""
+
+selection = []
+for x in range(SAMPLING_SPACE_SIZE[0]):
+    layer = []
+    for y in range(SAMPLING_SPACE_SIZE[1]):
+        val = signedDistanceField[x][y][SAMPLING_SPACE_SIZE[2]//2]
+        v = min(max(   val * 50   , 0), 255)
+        layer.append(v)
+    selection.append(layer)
+
+ImageFromArray(selection, "new_output.png")
+
+print("New Signed Distance Field Created")
+
+"""
+calculate signs here
+apply signs
+run surface tension simulation
+the output should be super smooth and accuret
+"""
+
+
+
+
 
 
 
@@ -337,14 +495,19 @@ for itteration in range(TENSION_ITTERATIONS):
     for x in range(SAMPLING_SPACE_SIZE[0])]
 
     # looping through the sample space except the bounds
-    for x_ in range(SAMPLING_SPACE_SIZE[0] - 5):
-        for y_ in range(SAMPLING_SPACE_SIZE[1] - 5):
-            for z_ in range(SAMPLING_SPACE_SIZE[2] - 5):
-                x, y, z = x_ + 3, y_ + 3, z_ + 3  # the grid coordinates for the signedDistanceField
-                x2, y2, z2 = x - 1, y - 1, z - 1
+    for x_ in range(SAMPLING_SPACE_SIZE[0] - 4):
+        for y_ in range(SAMPLING_SPACE_SIZE[1] - 4):
+            for z_ in range(SAMPLING_SPACE_SIZE[2] - 4):
+                x, y, z = x_ + 2, y_ + 2, z_ + 2  # the grid coordinates for the signedDistanceField
+                x2, y2, z2 = x - 1, y - 1, z - 1  # the grid coordinates for the normals
 
                 # calculating the surface tension
-                kappa = ((normalsGrid[x2][y2][z2][0] - normalsGrid[x2 - 2][y2][z2][0]) / (2 * DELTA_X) + (normalsGrid[x2][y2][z2][1] - normalsGrid[x2][y2 - 2][z2][1]) / (2 * DELTA_Y) + (normalsGrid[x2][y2][z2][2] - normalsGrid[x2][y2][z2 - 2][2]) / (2 * DELTA_Z))
+                
+                kappa = -1 + 0*(
+                    (normalsGrid[x2 + 1][y2][z2][0] - normalsGrid[x2 - 1][y2][z2][0]) / (2 * DELTA_X) +
+                    (normalsGrid[x2][y2 + 1][z2][1] - normalsGrid[x2][y2 - 1][z2][1]) / (2 * DELTA_Y) +
+                    (normalsGrid[x2][y2][z2 + 1][2] - normalsGrid[x2][y2][z2 - 1][2]) / (2 * DELTA_Z)
+                )
                 
                 dMinusX = (signedDistanceField[x][y][z] - signedDistanceField[x - 1][y][z]) / DELTA_X
                 dMinusY = (signedDistanceField[x][y][z] - signedDistanceField[x][y - 1][z]) / DELTA_Y
@@ -399,7 +562,7 @@ for x in range(SAMPLING_SPACE_SIZE[0]):
                 sign = signedGrid[x][y][z]
             else:
                 # checking if the point's outside an object
-                if signedDistanceField[x][y][z] > ISO_CONTOUR_LEVEL:
+                if signedDistanceField[x][y][z] >= ISO_CONTOUR_LEVEL:
                     # flood filling the area
                     sign *= -1  # flipping the sign (this should only run once it's left the bounds of the object's surface)
                     FloodFill([x, y, z], signedDistanceField, signedGrid, sign)
@@ -431,6 +594,13 @@ for x in range(SAMPLING_SPACE_SIZE[0]):
     selection.append(layer)
 
 ImageFromArray(selection, "output.png")
+
+
+# saving the json of the output
+SaveJson({
+    "Signed Distance Field": signedDistanceField
+}, f"tensioned_{SAVE_FILE}")
+print("Json File Saved")
 
 
 
