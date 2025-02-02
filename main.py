@@ -8,15 +8,21 @@ import open3d as o3d
 import json
 
 # determins if the signed distance field is being imported or being calculated from a pcd
-LOADING_DISTANCE_FIELD_SAVE = True
-FIELD_FILE = "objectSaveFibSphere.json"  # tensioned_
-SAVE_FILE = "objectSave.json"
+LOADING_DISTANCE_FIELD_SAVE = False
+GENERATE_NEW_VERSION_SDF = True
+USING_OLD_SDF = False
+FIELD_FILE = "tensioned_objectSaveShelledGood.json"  # "objectSaveFibSphere.json"  # tensioned_      "tensioned_objectSaveNew.json"#"objectSaveNew.json"    #"tensioned_objectSaveShelled.json"#""
+SAVE_FILE = "objectSaveShelledTesting2.json"
+
+TENSION_IMAGES_SAVE_PATH = "ShrinkWrap/"
+SAVE_TENSION_IMAGES = True
 
 # the level at which the surface is defined as solid instead of void
 ISO_CONTOUR_LEVEL = 4
 
 # as long as the chunk size equals this any points that can make the surface solid will be within the neighboring 27 cells
-CHUNK_SIZE = 25#math.ceil(ISO_CONTOUR_LEVEL * 1.5)
+CHUNK_SIZE = ISO_CONTOUR_LEVEL#math.ceil(ISO_CONTOUR_LEVEL * 1.5)
+SHELL_CHUNK_SIZE = 8#25  # the chunk size for the points generated to represent the bubbly shell around the approximated objects
 
 # the size and positioning of the calculated area
 SAMPLING_SPACE_SIZE = [101, 101, 101]
@@ -26,14 +32,16 @@ SAMPLING_SPACE_OFFSET = [0, 0, 0]
 MAX_FILL_DEPTH = 1000000
 
 # the number of iterations of surface tension to smooth out the surface (the more the better the surface)
-TENSION_ITTERATIONS = 0#50
+SIMULATING_SURFACE_TENSION = False
+TENSION_ITTERATIONS = 150#50
+VELOCITY = -2.5  # constant velocity with respect to the gradient
 
 # the delta time and spacing for various components of the simulation (space and time)
 DELTA_X = 1
 DELTA_Y = 1
 DELTA_Z = 1
 
-DT = 0.0075
+DT = 0.0055
 
 
 
@@ -41,13 +49,13 @@ print("Packages Imported and Setup Complete")
 
 
 # gets the hash for the chunk hash map
-def GetChunk(point: tuple) -> tuple:
-    return [int(point[0] // CHUNK_SIZE), int(point[1] // CHUNK_SIZE), int(point[2] // CHUNK_SIZE)]
+def GetChunk(point: tuple, cs: float) -> tuple:
+    return [int(point[0] // cs), int(point[1] // cs), int(point[2] // cs)]
 
 
 # returns all the surrounding 27 chunks' positions (I'm too lazy to write out all of this everytime it's needed and it's faster to have it hard coded)
-def GetChunks(point: tuple) -> list:  # includes the inputed point in this selection
-    chunk = GetChunk(point)
+def GetChunks(point: tuple, cs: float) -> list:  # includes the inputed point in this selection
+    chunk = GetChunk(point, cs)
     return [
         [chunk[0] - 1, chunk[1] - 1, chunk[2] - 1], [chunk[0], chunk[1] - 1, chunk[2] - 1], [chunk[0] + 1, chunk[1] - 1, chunk[2] - 1],
         [chunk[0] - 1, chunk[1]    , chunk[2] - 1], [chunk[0], chunk[1]    , chunk[2] - 1], [chunk[0] + 1, chunk[1]    , chunk[2] - 1],
@@ -114,6 +122,33 @@ def FloodFill(point: tuple, distanceField: list, signedGrid: list, sign: int) ->
         
         # ending the search once all points have been searched
         if not neighbors: return
+
+
+# calculates the internal/external sections of parts
+def CalculateSigns(signedGridInput: list) -> None:
+    # filling the inital void (the entire perimeter should be void if the program's setup was correctly done and set to encompass the entire point cloud)
+    print("Signs Calculated 0% |                    |", end='\r')
+    FloodFill([0, 0, 0], signedDistanceField, signedGridInput, 1)  # this is the bottle neck
+
+    # starting a march across the grid to fill in all reigons
+    for x in range(SAMPLING_SPACE_SIZE[0]):
+        print(f"Signs Calculated {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
+        for y in range(SAMPLING_SPACE_SIZE[1]):
+            # beginning the march
+            sign = 1  # the entire perimeter should be void so it's safe to assume it as such
+            for z in range(SAMPLING_SPACE_SIZE[2]):
+                # checking if the point has already been filled
+                if signedGridInput[x][y][z]:
+                    # setting the sign to the already calculated value and moving on
+                    sign = signedGridInput[x][y][z]
+                else:
+                    # checking if the point's outside an object
+                    if signedDistanceField[x][y][z] >= ISO_CONTOUR_LEVEL:
+                        # flood filling the area
+                        sign *= -1  # flipping the sign (this should only run once it's left the bounds of the object's surface)
+                        FloodFill([x, y, z], signedDistanceField, signedGridInput, sign)
+
+    print("\x1b[2KSigns Calculated")
 
 
 # loading a pcd file
@@ -225,13 +260,12 @@ else:
     #"""
 
 
-
     # the hash map for sorting the points into chunks (for faster data calculations)
     chunkedPoints = {}
 
     # moving through the points and sorting them into chunks
     for point in pointCloud:
-        chunk = str(GetChunk(point))
+        chunk = str(GetChunk(point, CHUNK_SIZE))
         if chunk in chunkedPoints:  # adding the point to an exsisting chunk
             chunkedPoints[chunk].append(point)
         else:
@@ -255,7 +289,7 @@ else:
                 # getting the global position of the point
                 x, y, z = x_ + SAMPLING_SPACE_OFFSET[0], y_ + SAMPLING_SPACE_OFFSET[1], z_ + SAMPLING_SPACE_OFFSET[2]
                 
-                neighboringChunks = GetChunks([x, y, z])
+                neighboringChunks = GetChunks([x, y, z], CHUNK_SIZE)
                 nearest = ISO_CONTOUR_LEVEL + 9999  # chosing a value out of range of the surface to not conflict with it
                 
                 # searching through the neighboring points to find the nearest one
@@ -286,298 +320,380 @@ else:
 
 
 
-#######
-"""
-# temporary
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        for z in range(SAMPLING_SPACE_SIZE[2]):
-            signedDistanceField[x][y][z] = abs(signedDistanceField[x][y][z])
-"""
+if USING_OLD_SDF:
+    # ensuring the signs of any sdf's are corrected to not mess up any of the following calculations
+    for x in range(SAMPLING_SPACE_SIZE[0]):
+        for y in range(SAMPLING_SPACE_SIZE[1]):
+            for z in range(SAMPLING_SPACE_SIZE[2]):
+                signedDistanceField[x][y][z] = abs(signedDistanceField[x][y][z])
 
 
 
 
+# stores and sorts a set of points into a grid of chunks
+class ChunkGrid:
 
+    # initializing the chunk grid
+    def __init__(self, chunks: list, smallBound: list, largeBound: list, ChunkKey) -> None:
+        self.chunks = chunks
+        self.smallBound = smallBound
+        self.largeBound = largeBound
+        self.ChunkKey = ChunkKey
 
+        self.chunkBounds = [len(self.chunks), len(self.chunks[0]), len(self.chunks[0][0])]
+    
+    # finds the nearest point given a starting position
+    def FindNearestPoint(self, samplePosition: list) -> list:  # returns the nearest point and the distance to it ([pointX, pointY, pointZ], dst)
+        # bringing the point to the start of the grid (saves time searching through empty space)
+        correctedPosition = [
+            max(min(samplePosition[0], self.largeBound[0]), self.smallBound[0]),
+            max(min(samplePosition[1], self.largeBound[1]), self.smallBound[1]),
+            max(min(samplePosition[2], self.largeBound[2]), self.smallBound[2])
+        ]
 
-# finding the exact gradient
-"""
-# generating a new array to fill with the contour
-contourGrid = [  # an array of 0's the same size as the signedDistanceField
-    [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
-        for y in range(SAMPLING_SPACE_SIZE[1])]
-    for x in range(SAMPLING_SPACE_SIZE[0])]
-contours = []
-
-# itterating through the grid and finding the contours
-for x in range(1, SAMPLING_SPACE_SIZE[0] - 1):
-    for y in range(1, SAMPLING_SPACE_SIZE[1] - 1):
-        for z in range(1, SAMPLING_SPACE_SIZE[2] - 1):
-            # checking if the gradient is in a trough indicating the contour
-            minsz = min(signedDistanceField[x][y][z + 1], signedDistanceField[x][y][z - 1])
-            minsy = min(signedDistanceField[x][y + 1][z], signedDistanceField[x][y - 1][z])
-            minsx = min(signedDistanceField[x + 1][y][z], signedDistanceField[x - 1][y][z])
-            if signedDistanceField[x][y][z] < ISO_CONTOUR_LEVEL and signedDistanceField[x][y][z] < max(max(minsz, minsy), minsx):
-                # setting the contour at the position
-                contourGrid[x][y][z] = 1
-                contours.append([x, y, z])
-
-print(f"Contour Grid Created: {len(contours)}")
-
-
-selection = []
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    layer = []
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        val = contourGrid[x][y][SAMPLING_SPACE_SIZE[2]//2]
-        v = min(max(val * 255, 0), 255)
-        layer.append(v)
-    selection.append(layer)
-
-ImageFromArray(selection, "new_output2.png")
-
-
-
-# generates the surrounding cells that need to be searched
-def GenerateSearches(i: int, pos: tuple) -> list:
-    # [-i - i, -i, -i - i]  # bottom
-    # [-i - i, i, -i - i]  # top
-    # [-i, -i2 - i2, -i - i] # left
-    # [i, -i2 - i2, -i - i]  # right
-    # [-i - i, -i2 - i2, -i]  # back
-    # [-i - i, -i2 - i2, i]  # front
-    searches = []
-    for x in range(-i, i):
-        for z in range(-i, i):  # top/bottom
-            searches.append([x, -i, z])
-            searches.append([x, i, z])
+        # getting the starting chunk position
+        startingChunkPosition = self.ChunkKey(correctedPosition)
+        occupied, finalRadius = self.ExpandingSearch(startingChunkPosition, 0)
+        if not occupied: return [(999999, 999999, 999999), 999999]  # ending the search if no points were found
         
-        for y in range(-i + 1, i - 1):  # back/front
-            searches.append([x, y, -i])
-            searches.append([x, y, i])
+        # finding the nearest point within the current search
+        nearestPoint = [0, 0, 0]
+        nearestDepth = 999999
+
+        # going through the points
+        for point in occupied:
+            # calculating the distance
+            dx, dy, dz = samplePosition[0] - point[0], samplePosition[1] - point[1], samplePosition[2] - point[2]
+            dst = dx*dx + dy*dy + dz*dz
+
+            # checking if this is the smallest distance found so far
+            if dst < nearestDepth:
+                # updating the information on the nearest point
+                nearestDepth = dst
+                nearestPoint = point
+        
+        # checking if the radius is grater than the minimum size of the box search
+        if finalRadius < nearestDepth:
+            # doing an extended search in case there is a closer point within this range
+            maxExtendedDepth = math.ceil(finalRadius - nearestDepth)  # the max possible radius out
+
+            # doing the extended search
+            newOccupied, newFinalRadius = self.ExpandingSearch(startingChunkPosition, finalRadius + 1, maxSearchDepth=maxExtendedDepth)
+
+            # checking if any of these new points are closer (if any)
+            for point in newOccupied:
+                # calculating the distance
+                dx, dy, dz = samplePosition[0] - point[0], samplePosition[1] - point[1], samplePosition[2] - point[2]
+                dst = dx*dx + dy*dy + dz*dz
+
+                # checking if this is the smallest distance found so far
+                if dst < nearestDepth:
+                    # updating the information on the nearest point
+                    nearestDepth = dst
+                    nearestPoint = point
+        
+        # returning the conclusions of the search
+        return (nearestPoint[0], nearestDepth)
     
-    for y in range(-i + i, i - 1):  # left/right
-        for z in range(-i, i):
-            searches.append([-i, y, z])
-            searches.append([i, y, z])
-    
-    # updating the points based on position
-    for i in range(len(searches)):
-        searches[i] = [searches[i][0] + pos[0], searches[i][1] + pos[1], searches[i][2] + pos[2]]
-    
-    # returning the positions
-    return searches
-
-
-newSignedDistanceField = [  # an array of 0's the same size as the signedDistanceField
-    [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
-        for y in range(SAMPLING_SPACE_SIZE[1])]
-    for x in range(SAMPLING_SPACE_SIZE[0])]
-
-# generating a new signed distance function based on the contour
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    print(f"New Distance Field {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
-    break
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        for z in range(SAMPLING_SPACE_SIZE[2]):
-            # searching for the nearest point
-            depth = 0
-            nearest = 99999999
-            searches = [[x, y, z]]
-
-            # repeadidly searching and expanding the search until the nearest point is found
-            while searches:
-                found = True
-                for search in searches:
-                    if contourGrid[search[0]][search[1]][search[2]]:
-                        # updating the lowest distance
-                        dst = math.sqrt(pow(search[0] - x, 2.0) + pow(search[1] - y, 2.0) + pow(search[2] - z, 2.0))
-                        nearest = min(nearest, dst)
-                        found = True
+    # expands a search until a chunk with points is found
+    def ExpandingSearch(self, startingPos: list, radius: int, maxSearchDepth: int = 9999) -> list:  # (returns a list with all the chunk positions that have points, returns the final radius)
+        # searching for any occupied chunks within the search area
+        occupiedChunks = []
+        for x in range(-radius, radius + 1):
+            # making sure the position is valid
+            if startingPos[0] + x < 0 or startingPos[0] + x >= self.chunkBounds[0]: continue
             
-                depth += 1
-                if found:  # checking if the nearest point was found or if the search needs to expand
-                    # checking if there are other possible nearest points
-                    if nearest > depth:
-                        # finding the extended range which needs to be accounted for
-                        dif = math.ceil(nearest - depth)
-                        newSearches = []
-                        for depth2 in range(dif):
-                            newSearches += GenerateSearches(depth + depth2, [x, y, z])
-                        
-                        # going through the new searches
-                        for search2 in newSearches:
-                            if contourGrid[search[0]][search[1]][search[2]]:
-                                # updating the lowest distance
-                                dst = math.sqrt(pow(search2[0] - x, 2.0) + pow(search2[1] - y, 2.0) + pow(search2[2] - z, 2.0))
-                                nearest = min(nearest, dst)
+            # searching along the y axis
+            for y in range(-radius, radius + 1):
+                # making sure the position is valid
+                if startingPos[1] + y < 0 or startingPos[1] + y >= self.chunkBounds[1]: continue
+                
+                # checking each chunk for occupancy
+                if startingPos[2] - radius >= 0:  # startingPos[2] - radius < self.chunkBounds[2] and 
+                    if self.chunks[startingPos[0] + x][startingPos[1] + y][startingPos[2] - radius]: occupiedChunks += self.chunks[startingPos[0] + x][startingPos[1] + y][startingPos[2] - radius]
+                if startingPos[2] + radius < self.chunkBounds[2]:  # and startingPos[2] + radius >= 0
+                    if self.chunks[startingPos[0] + x][startingPos[1] + y][startingPos[2] + radius]: occupiedChunks += self.chunks[startingPos[0] + x][startingPos[1] + y][startingPos[2] + radius]
 
-                    # ending the search
-                    break
-                else:
-                    searches = GenerateSearches(depth, [x, y, z])
+            # searching along the z axis:
+            for z in range(-radius, radius + 1):
+                # making sure the position is valid
+                if startingPos[2] + z < 0 or startingPos[2] + z >= self.chunkBounds[2]: continue
 
-            nearest = 99999
-            for contour in contours:
-                dst = math.sqrt(pow(contour[0] - x, 2.0) + pow(contour[1] - y, 2.0) + pow(contour[2] - z, 2.0))
-                nearest = min(nearest, dst)
+                # checking each chunk for occupancy
+                if startingPos[1] - radius >= 0:  # startingPos[1] - radius < self.chunkBounds[1] and 
+                    if self.chunks[startingPos[0] + x][startingPos[1] - radius][startingPos[2] + z]: occupiedChunks += self.chunks[startingPos[0] + x][startingPos[1] - radius][startingPos[2] + z]
+                if startingPos[1] + radius < self.chunkBounds[1]:  # and startingPos[1] + radius >= 0
+                    if self.chunks[startingPos[0] + x][startingPos[1] + radius][startingPos[2] + z]: occupiedChunks += self.chunks[startingPos[0] + x][startingPos[1] + radius][startingPos[2] + z]
 
-            # updating the distance
-            newSignedDistanceField[x][y][z] = nearest
-"""
+        # searching along the y and z axis
+        for y in range(-radius, radius + 1):
+            # making sure the position is valid
+            if startingPos[1] + y < 0 or startingPos[1] + y >= self.chunkBounds[1]: continue
 
-selection = []
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    layer = []
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        val = signedDistanceField[x][y][SAMPLING_SPACE_SIZE[2]//2]
-        v = min(max(   val * 50   , 0), 255)
-        layer.append(v)
-    selection.append(layer)
+            # searching along the z axis
+            for z in range(-radius, radius + 1):
+                # making sure the position is valid
+                if startingPos[2] + z < 0 or startingPos[2] + z >= self.chunkBounds[2]: continue
 
-ImageFromArray(selection, "new_output.png")
+                # checking each chunk for occupancy
+                if startingPos[0] - radius >= 0:  # startingPos[0] - radius < self.chunkBounds[0] and 
+                    if self.chunks[startingPos[0] - radius][startingPos[1] + y][startingPos[2] + z]: occupiedChunks += self.chunks[startingPos[0] - radius][startingPos[1] + y][startingPos[2] + z]
+                if startingPos[0] + radius < self.chunkBounds[0]:  # and startingPos[0] + radius >= 0
+                    if self.chunks[startingPos[0] + radius][startingPos[1] + y][startingPos[2] + z]: occupiedChunks += self.chunks[startingPos[0] + radius][startingPos[1] + y][startingPos[2] + z]
 
-print("New Signed Distance Field Created")
+        # returning the found occupied chunks    or return the empty list if the search depth limit has been reached
+        if occupiedChunks or radius == maxSearchDepth: return (occupiedChunks, radius)
 
-"""
-calculate signs here
-apply signs
-run surface tension simulation
-the output should be super smooth and accuret
-"""
+        # continung the search for occupied chunks
+        return self.ExpandingSearch(startingPos, radius + 1)  # expanding the search recursively
 
 
+# generates a sorted chunk grid from a list of points
+def GenerateChunks(points: list, chunkSize: float) -> ChunkGrid:
+    smallest = [999999, 999999, 999999]
+    largest = [-999999, -999999, -999999]
 
-
-
-
-
-
-
-print("Surface Tension Calculated 0% |                    |", end='\r')
-
-# generating surface normals
-normalsGrid = [  # an array of 0's the same size as the signedDistanceField
-    [       [0 for z in range(SAMPLING_SPACE_SIZE[2]-2)]
-        for y in range(SAMPLING_SPACE_SIZE[1]-2)]
-    for x in range(SAMPLING_SPACE_SIZE[0]-2)]
-
-# apply surface tension repeadidly to smooth the surface and remove the lumps
-for itteration in range(TENSION_ITTERATIONS):
-    print(f"Surface Tension Calculated {round(itteration/TENSION_ITTERATIONS*100)}% |{'='*round(itteration/TENSION_ITTERATIONS*20)}{' '*(20-round(itteration/TENSION_ITTERATIONS*20))}|", end='\r')
-
+    # finding the smallest and largest points to fit the bounding box perfectly around them
+    for point in points:
+        smallest = [min(smallest[0], point[0]), min(smallest[1], point[1]), min(smallest[2], point[2])]
+        largest = [max(largest[0], point[0]), max(largest[1], point[1]), max(largest[2], point[2])]
     
-    # looping through the entire sample space minus the bounds
-    for x_ in range(SAMPLING_SPACE_SIZE[0] - 2):
-        for y_ in range(SAMPLING_SPACE_SIZE[1] - 2):
-            for z_ in range(SAMPLING_SPACE_SIZE[2] - 2):
-                x, y, z = x_ + 1, y_ + 1, z_ + 1  # the grid coordinates for the signedDistanceField
+    # a function to generate the chunk key
+    ChunkKey = lambda pos: [
+        int((pos[0] - smallest[0]) // chunkSize),  # translating the point than scaling it to fit the local space of the chunk grid
+        int((pos[1] - smallest[1]) // chunkSize),
+        int((pos[2] - smallest[2]) // chunkSize)
+    ]
 
-                # calculating the slope across various points
-                difX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x - 1][y][z]) / (2 * DELTA_X)
-                difY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y - 1][z]) / (2 * DELTA_Y)
-                difZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z - 1]) / (2 * DELTA_Z)
+    # finding the total size of the chunk grid
+    gridSize = [
+        math.ceil(abs(largest[0] - smallest[0]) / chunkSize),
+        math.ceil(abs(largest[1] - smallest[1]) / chunkSize),
+        math.ceil(abs(largest[2] - smallest[2]) / chunkSize)
+    ]
 
-                # calculating the normalized normal
-                l = math.sqrt(difX*difX + difY*difY + difZ*difZ)
-                if l: normal = [difX / l, difY / l, difZ / l]
-                else: normal = [0, 0, 0]
-
-                # filling in the value
-                normalsGrid[x_][y_][z_] = normal
-
-
-    # copying the entirety of the signed distance field
-    signedDistanceFieldCopy = [
-    [       [signedDistanceField[x][y][z] for z in range(SAMPLING_SPACE_SIZE[2])]
-        for y in range(SAMPLING_SPACE_SIZE[1])]
-    for x in range(SAMPLING_SPACE_SIZE[0])]
-
-    # looping through the sample space except the bounds
-    for x_ in range(SAMPLING_SPACE_SIZE[0] - 4):
-        for y_ in range(SAMPLING_SPACE_SIZE[1] - 4):
-            for z_ in range(SAMPLING_SPACE_SIZE[2] - 4):
-                x, y, z = x_ + 2, y_ + 2, z_ + 2  # the grid coordinates for the signedDistanceField
-                x2, y2, z2 = x - 1, y - 1, z - 1  # the grid coordinates for the normals
-
-                # calculating the surface tension
-                
-                kappa = -1 + 0*(
-                    (normalsGrid[x2 + 1][y2][z2][0] - normalsGrid[x2 - 1][y2][z2][0]) / (2 * DELTA_X) +
-                    (normalsGrid[x2][y2 + 1][z2][1] - normalsGrid[x2][y2 - 1][z2][1]) / (2 * DELTA_Y) +
-                    (normalsGrid[x2][y2][z2 + 1][2] - normalsGrid[x2][y2][z2 - 1][2]) / (2 * DELTA_Z)
-                )
-                
-                dMinusX = (signedDistanceField[x][y][z] - signedDistanceField[x - 1][y][z]) / DELTA_X
-                dMinusY = (signedDistanceField[x][y][z] - signedDistanceField[x][y - 1][z]) / DELTA_Y
-                dMinusZ = (signedDistanceField[x][y][z] - signedDistanceField[x][y][z - 1]) / DELTA_Z
-
-                dPlusX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x][y][z]) / DELTA_X
-                dPlusY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y][z]) / DELTA_Y
-                dPlusZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z]) / DELTA_Z
-                
-                gradPlus = math.sqrt(
-                    pow(max(dMinusX, 0.0), 2.0) + pow(min(dPlusX, 0.0), 2.0) +
-                    pow(max(dMinusY, 0.0), 2.0) + pow(min(dPlusY, 0.0), 2.0) +
-                    pow(max(dMinusZ, 0.0), 2.0) + pow(min(dPlusZ, 0.0), 2.0)
-                )
-                gradMinus = math.sqrt(
-                    pow(min(dMinusX, 0.0), 2.0) + pow(max(dPlusX, 0.0), 2.0) +
-                    pow(min(dMinusY, 0.0), 2.0) + pow(max(dPlusY, 0.0), 2.0) +
-                    pow(min(dMinusZ, 0.0), 2.0) + pow(max(dPlusZ, 0.0), 2.0)
-                )
-                
-                # applying the surface tension
-                signedDistanceFieldCopy[x][y][z] += DT * (max(kappa, 0) * gradPlus + min(kappa, 0) * gradMinus)
-
-    # replacing the old signed distance field with the new one
-    signedDistanceField = signedDistanceFieldCopy
-
-
-print("\x1b[2KSurface Tension Calculated")
+    # creating the grid for the chunks
+    chunkGrid = [
+        [       [[] for z in range(gridSize[2])]
+            for y in range(gridSize[1])]
+        for x in range(gridSize[0])]
+    
+    # adding the points to the grid
+    for point in points:
+        # finding the chunk key and adding the point
+        key = ChunkKey(point)
+        chunkGrid[key[0]][key[1]][key[2]].append([point[0], point[1], point[2]])
+    
+    # returning the results
+    return ChunkGrid(
+        chunkGrid,
+        smallest,
+        largest,
+        ChunkKey
+    )
 
 
 
-# generating a new grid to keep track of the sign changes
-signedGrid = [  # an array of 0's the same size as the signedDistanceField
-    [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
-        for y in range(SAMPLING_SPACE_SIZE[1])]
-    for x in range(SAMPLING_SPACE_SIZE[0])]
+# generating an updated sdf
+if GENERATE_NEW_VERSION_SDF:
+    # generating a shell around the objects
 
-# filling the inital void (the entire perimeter should be void if the program's setup was correctly done and set to encompass the entire point cloud)
-print("Signs Calculated 0% |                    |", end='\r')
-FloodFill([0, 0, 0], signedDistanceField, signedGrid, 1)  # this is the bottle neck
+    # generating a new grid to keep track of the sign changes
+    signedGrid = [  # an array of 0's the same size as the signedDistanceField
+        [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
+            for y in range(SAMPLING_SPACE_SIZE[1])]
+        for x in range(SAMPLING_SPACE_SIZE[0])]
 
-# starting a march across the grid to fill in all reigons
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    print(f"Signs Calculated {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        # beginning the march
-        sign = 1  # the entire perimeter should be void so it's safe to assume it as such
-        for z in range(SAMPLING_SPACE_SIZE[2]):
-            # checking if the point has already been filled
-            if signedGrid[x][y][z]:
-                # setting the sign to the already calculated value and moving on
+    CalculateSigns(signedGrid)
+
+    # all the surface points which will be sorted later
+    surfacePoints = []
+
+    # creating the shell around all objects surfaces (still bubbly)
+    print("Calculating Object Shell 0% |                    |", end='\r')
+    for x in range(1, SAMPLING_SPACE_SIZE[0] - 1):
+        print(f"Calculating Object Shell {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
+        for y in range(1, SAMPLING_SPACE_SIZE[1] - 1):
+            for z in range(1, SAMPLING_SPACE_SIZE[2] - 1):
+                # calculating the new distance from the shell of the object
+                if max([
+                        max(signedGrid[x - 1][y][z], signedGrid[x + 1][y][z]),
+                        max(signedGrid[x][y - 1][z], signedGrid[x][y + 1][z]),
+                        max(signedGrid[x][y][z - 1], signedGrid[x][y][z + 1])
+                    ]) > 0:
+                    if (signedGrid[x][y][z] < 0) or (signedDistanceField[x][y][z] < ISO_CONTOUR_LEVEL):
+                        # finding the chunk
+                        surfacePoints.append([x, y, z])  # adding the point
+
+    print("\x1b[2KCalculated Object Shell")
+
+
+    print("Calculating New Distance Field 0% |                    |", end='\r')
+
+    # creating a new signed distance field that uses the distance to the calculated approximate surface
+    newSignedDistanceField = [  # an array of 0's the same size as the signedDistanceField
+        [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
+            for y in range(SAMPLING_SPACE_SIZE[1])]
+        for x in range(SAMPLING_SPACE_SIZE[0])]
+    
+    # generating the chunk grid and sorting the points
+    chunkGrid = GenerateChunks(surfacePoints, SHELL_CHUNK_SIZE)
+
+    # finding all the new distances
+    for x in range(SAMPLING_SPACE_SIZE[0]):
+        print(f"Calculating New Distance Field {round(x/SAMPLING_SPACE_SIZE[0]*100)}% |{'='*round(x/SAMPLING_SPACE_SIZE[0]*20)}{' '*(20-round(x/SAMPLING_SPACE_SIZE[0]*20))}|", end='\r')
+        for y in range(SAMPLING_SPACE_SIZE[1]):
+            for z in range(SAMPLING_SPACE_SIZE[2]):
+                # finding the nearest point
+                nearestPoint, distance = chunkGrid.FindNearestPoint([x, y, z])
+
+                # finding the correct sign for the current position
                 sign = signedGrid[x][y][z]
-            else:
-                # checking if the point's outside an object
-                if signedDistanceField[x][y][z] >= ISO_CONTOUR_LEVEL:
-                    # flood filling the area
-                    sign *= -1  # flipping the sign (this should only run once it's left the bounds of the object's surface)
-                    FloodFill([x, y, z], signedDistanceField, signedGrid, sign)
+                if signedDistanceField[x][y][z] < ISO_CONTOUR_LEVEL and sign > -1: sign = -1
+                if not sign: sign = 1
+
+                # updating the new signed distance field with the new signed-distance
+                newSignedDistanceField[x][y][z] = math.sqrt(distance) * sign + ISO_CONTOUR_LEVEL
+
+    print("\x1b[2KCalculated New Distance Field")
 
 
-# adjusting the signedDistanceField for the generated signs
-for x in range(SAMPLING_SPACE_SIZE[0]):
-    for y in range(SAMPLING_SPACE_SIZE[1]):
-        for z in range(SAMPLING_SPACE_SIZE[2]):
-            # adjusting the sign
-            if signedGrid[x][y][z]:
-                signedDistanceField[x][y][z] *= signedGrid[x][y][z]
+    # uploading a new output image
+    selection = []
+    for x in range(SAMPLING_SPACE_SIZE[0]):
+        layer = []
+        for y in range(SAMPLING_SPACE_SIZE[1]):
+            val = min(max(newSignedDistanceField[x][y][SAMPLING_SPACE_SIZE[2]//2] * 100 + 50, 0), 255)
+            
+            layer.append(val)
+        selection.append(layer)
+
+    ImageFromArray(selection, "new_output.png")
+
+    print("New Signed Distance Field Created")
+    signedDistanceField = newSignedDistanceField  # temporary till I update the rest of the code
+    #"""
 
 
-print("\x1b[2KSigns Calculated")
+
+# simulating surface tension
+if SIMULATING_SURFACE_TENSION:
+    print("Surface Tension Calculated 0% |                    |", end='\r')
+
+    # generating surface normals
+    normalsGrid = [  # an array of 0's the same size as the signedDistanceField
+        [       [0 for z in range(SAMPLING_SPACE_SIZE[2]-2)]
+            for y in range(SAMPLING_SPACE_SIZE[1]-2)]
+        for x in range(SAMPLING_SPACE_SIZE[0]-2)]
+
+    # apply surface tension repeadidly to smooth the surface and remove the lumps
+    for itteration in range(TENSION_ITTERATIONS):
+        print(f"Surface Tension Calculated {round(itteration/TENSION_ITTERATIONS*100)}% |{'='*round(itteration/TENSION_ITTERATIONS*20)}{' '*(20-round(itteration/TENSION_ITTERATIONS*20))}|", end='\r')
+
+
+        # looping through the entire sample space minus the bounds
+        for x_ in range(SAMPLING_SPACE_SIZE[0] - 2):
+            for y_ in range(SAMPLING_SPACE_SIZE[1] - 2):
+                for z_ in range(SAMPLING_SPACE_SIZE[2] - 2):
+                    x, y, z = x_ + 1, y_ + 1, z_ + 1  # the grid coordinates for the signedDistanceField
+
+                    # calculating the slope across various points
+                    difX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x - 1][y][z]) / (2 * DELTA_X)
+                    difY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y - 1][z]) / (2 * DELTA_Y)
+                    difZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z - 1]) / (2 * DELTA_Z)
+
+                    # calculating the normalized normal
+                    l = math.sqrt(difX*difX + difY*difY + difZ*difZ)
+                    if l: normal = [difX / l, difY / l, difZ / l]
+                    else: normal = [0, 0, 0]
+
+                    # filling in the value
+                    normalsGrid[x_][y_][z_] = normal
+
+
+        # copying the entirety of the signed distance field
+        signedDistanceFieldCopy = [
+        [       [signedDistanceField[x][y][z] for z in range(SAMPLING_SPACE_SIZE[2])]
+            for y in range(SAMPLING_SPACE_SIZE[1])]
+        for x in range(SAMPLING_SPACE_SIZE[0])]
+
+        # looping through the sample space except the bounds
+        for x_ in range(SAMPLING_SPACE_SIZE[0] - 4):
+            for y_ in range(SAMPLING_SPACE_SIZE[1] - 4):
+                for z_ in range(SAMPLING_SPACE_SIZE[2] - 4):
+                    x, y, z = x_ + 2, y_ + 2, z_ + 2  # the grid coordinates for the signedDistanceField
+                    x2, y2, z2 = x - 1, y - 1, z - 1  # the grid coordinates for the normals
+
+                    # calculating the surface tension
+                    
+                    kappa = (
+                        (normalsGrid[x2 + 1][y2][z2][0] - normalsGrid[x2 - 1][y2][z2][0]) / (2 * DELTA_X) +
+                        (normalsGrid[x2][y2 + 1][z2][1] - normalsGrid[x2][y2 - 1][z2][1]) / (2 * DELTA_Y) +
+                        (normalsGrid[x2][y2][z2 + 1][2] - normalsGrid[x2][y2][z2 - 1][2]) / (2 * DELTA_Z)
+                    )
+                    
+                    dMinusX = (signedDistanceField[x][y][z] - signedDistanceField[x - 1][y][z]) / DELTA_X
+                    dMinusY = (signedDistanceField[x][y][z] - signedDistanceField[x][y - 1][z]) / DELTA_Y
+                    dMinusZ = (signedDistanceField[x][y][z] - signedDistanceField[x][y][z - 1]) / DELTA_Z
+
+                    dPlusX = (signedDistanceField[x + 1][y][z] - signedDistanceField[x][y][z]) / DELTA_X
+                    dPlusY = (signedDistanceField[x][y + 1][z] - signedDistanceField[x][y][z]) / DELTA_Y
+                    dPlusZ = (signedDistanceField[x][y][z + 1] - signedDistanceField[x][y][z]) / DELTA_Z
+                    
+                    gradPlus = math.sqrt(
+                        pow(max(dMinusX, 0.0), 2.0) + pow(min(dPlusX, 0.0), 2.0) +
+                        pow(max(dMinusY, 0.0), 2.0) + pow(min(dPlusY, 0.0), 2.0) +
+                        pow(max(dMinusZ, 0.0), 2.0) + pow(min(dPlusZ, 0.0), 2.0)
+                    )
+                    gradMinus = math.sqrt(
+                        pow(min(dMinusX, 0.0), 2.0) + pow(max(dPlusX, 0.0), 2.0) +
+                        pow(min(dMinusY, 0.0), 2.0) + pow(max(dPlusY, 0.0), 2.0) +
+                        pow(min(dMinusZ, 0.0), 2.0) + pow(max(dPlusZ, 0.0), 2.0)
+                    )
+
+                    # applying the surface tension
+                    signedDistanceFieldCopy[x][y][z] += DT * (max(kappa + VELOCITY, 0) * gradPlus + min(kappa + VELOCITY, 0) * gradMinus)
+
+        # replacing the old signed distance field with the new one
+        signedDistanceField = signedDistanceFieldCopy
+
+        if SAVE_TENSION_IMAGES:
+            # rendering a slice of the signed distance field
+            selection = []
+            for x in range(SAMPLING_SPACE_SIZE[0]):
+                layer = []
+                for y in range(SAMPLING_SPACE_SIZE[1]):
+                    val = signedDistanceField[x][y][SAMPLING_SPACE_SIZE[2]//2]
+                    v = min(max(   val * 10 + 60   , 0), 255)
+                    v = [v, v, v]
+                    #if val < ISO_CONTOUR_LEVEL: v = [255, 0, v[0]]
+                    layer.append(v)
+                selection.append(layer)
+
+            ImageFromArray(selection, f"{TENSION_IMAGES_SAVE_PATH}output{itteration}.png")
+    
+
+    print("\x1b[2KSurface Tension Calculated")
+
+
+
+# updating the signs for older-type sdf's
+if not GENERATE_NEW_VERSION_SDF and USING_OLD_SDF:
+    # generating a new grid to keep track of the sign changes
+    signedGrid = [  # an array of 0's the same size as the signedDistanceField
+        [       [0 for z in range(SAMPLING_SPACE_SIZE[2])]
+            for y in range(SAMPLING_SPACE_SIZE[1])]
+        for x in range(SAMPLING_SPACE_SIZE[0])]
+
+    CalculateSigns(signedGrid)
+
+    # adjusting the signedDistanceField for the generated signs
+    for x in range(SAMPLING_SPACE_SIZE[0]):
+        for y in range(SAMPLING_SPACE_SIZE[1]):
+            for z in range(SAMPLING_SPACE_SIZE[2]):
+                # adjusting the sign
+                if signedGrid[x][y][z]:
+                    signedDistanceField[x][y][z] *= signedGrid[x][y][z]
 
 
 
@@ -601,7 +717,6 @@ SaveJson({
     "Signed Distance Field": signedDistanceField
 }, f"tensioned_{SAVE_FILE}")
 print("Json File Saved")
-
 
 
 # visulizing the outputed data
