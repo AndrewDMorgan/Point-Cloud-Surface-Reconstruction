@@ -37,12 +37,12 @@ const bool GENERATE_CUBE = false;
 // https://people.math.sc.edu/Burkardt/data/pcd/p213.pcd: TestFile.pcd
 
 // the level at which the surface is defined as solid instead of void
-double ISO_CONTOUR_LEVEL = 4.0;
+double ISO_CONTOUR_LEVEL = 6.0;
 
 // as long as the chunk size equals this any points that can make the surface solid will be within the neighboring 27 cells
 double CHUNK_SIZE = ISO_CONTOUR_LEVEL;
 const double SHELL_CHUNK_SIZE = 10;  // the chunk size for the points generated to represent the bubbly shell around the approximated objects
-const int CHUNK_BUFFER_SIZE = 250;
+//const int CHUNK_BUFFER_SIZE = 25;
 const int POINT_CLOUD_SIZE = 50000;
 const int SURFACE_POINTS_BUFFER_SIZE = 250000;
 
@@ -51,7 +51,7 @@ const int SAMPLING_SPACE_SIZE[3] = {101, 101, 101};  //[101, 101, 101]  # [500, 
 double SAMPLING_SPACE_OFFSET[3] = {0, 0, 0};
 
 // the maximum fill depth (to avoid any infinite loops in the case of an error in the code, part, or input settings)
-const int MAX_FILL_DEPTH = 1000000000;  // 1 billion. Hopefully that's not too little, the grids can get fairly large
+const int MAX_FILL_DEPTH = 100000000;  // 100 million. Hopefully that's not too little, the grids can get fairly large
 
 // the number of iterations of surface tension to smooth out the surface (the more the better the surface)
 const bool SIMULATING_SURFACE_TENSION = false;
@@ -91,6 +91,20 @@ double Max (double v1, double v2)
 }
 
 
+/*
+
+Something with the chunking system or chunk searching system is completely screwed up.
+
+The output has holes and sections that aren't being calculated right.
+
+This error is leading to a splotch at 0, 0, 0 and holes in the surface at lower iso levels.
+
+There aren't any points at 0, 0, 0; I checked and they're all positioned right.
+
+It's probably in the search system.
+
+*/
+
 
 // stores and sorts a set of points into a grid of chunks
 class ChunkGrid
@@ -121,7 +135,7 @@ private:
     public: ChunkGrid (int _gridSizeX, int _gridSizeY, int _gridSizeZ, int _smallBoundX, int _smallBoundY, int _smallBoundZ, int _largeBoundX, int _largeBoundY, int _largeBoundZ, double _chunkSize, int _bufferSize)
     {
         // creating the chunks
-        chunks = CArray <double> (_gridSizeX, _gridSizeY, _gridSizeZ, _bufferSize, 3);
+        chunks = CArray <double> (_gridSizeX, _gridSizeY, _gridSizeZ, _bufferSize, 3);  // failing right here for memory
         chunkStackedSize = CArray <int> (_gridSizeX, _gridSizeY, _gridSizeZ);
         chunkStackedSize.set_values(0);
         bufferSize = _bufferSize;
@@ -151,14 +165,14 @@ private:
         double correctedPositionZ = Max(Min(startingPositionZ, largeBoundZ), smallBoundZ);
 
         // finding the starting chunk position
-        double startingChunkPositionX = std::floor((correctedPositionX - smallBoundX) / chunkSize);
-        double startingChunkPositionY = std::floor((correctedPositionY - smallBoundY) / chunkSize);
-        double startingChunkPositionZ = std::floor((correctedPositionZ - smallBoundZ) / chunkSize);
+        int startingChunkPositionX = (int) ((correctedPositionX - smallBoundX) / chunkSize);
+        int startingChunkPositionY = (int) ((correctedPositionY - smallBoundY) / chunkSize);
+        int startingChunkPositionZ = (int) ((correctedPositionZ - smallBoundZ) / chunkSize);
 
         // getting the distance to the nearest point to the position
         int searchRadius = 0;
-        double finalDistance = ExpandingSearch(startingChunkPositionX, startingChunkPositionY, startingChunkPositionZ, startingPositionX, startingPositionY, startingPositionZ, searchRadius, 500);
-
+        double finalDistance = sqrt(ExpandingSearch(startingChunkPositionX, startingChunkPositionY, startingChunkPositionZ, startingPositionX, startingPositionY, startingPositionZ, searchRadius, 500));
+        
         // checking if the point is further away than the nearest edge of the search (cubes aren't circular)
         if ((double) searchRadius < finalDistance)
         {
@@ -167,7 +181,7 @@ private:
 
             // doing an extended search
             searchRadius++;  // searching beyond the current search
-            double expandedDistance = ExpandingSearch(startingChunkPositionX, startingChunkPositionY, startingChunkPositionZ, startingPositionX, startingPositionY, startingPositionZ, searchRadius, maxExtendedDepth);
+            double expandedDistance = sqrt(ExpandingSearch(startingChunkPositionX, startingChunkPositionY, startingChunkPositionZ, startingPositionX, startingPositionY, startingPositionZ, searchRadius, maxExtendedDepth));
 
             // checking if the new search returned a closer point
             if (expandedDistance < finalDistance) finalDistance = expandedDistance;
@@ -178,7 +192,7 @@ private:
     }
 
     // recursively expands a search until chunks with points are found; then returns the nearest distance
-    private: double ExpandingSearch (double chunkPositionX, double chunkPositionY, double chunkPositionZ, double positionX, double positionY, double positionZ, int &radius, int maxSearchDepth)
+    private: double ExpandingSearch (int chunkPositionX, int chunkPositionY, int chunkPositionZ, double positionX, double positionY, double positionZ, int &radius, int maxSearchDepth)
     {
         bool valid = false;  // for if no valid positions were found (not searching beyond bounds)
         double minDistance = 99999999.0;  // the minimum distance found
@@ -187,166 +201,148 @@ private:
         for (int x = -radius; x <= radius; x++)
         {
             // making sure the position is valid
-            if (chunkPositionX + x >= 0 && chunkPositionX + x < gridSizeX)
+            if (chunkPositionX + x < 0 || chunkPositionX + x >= gridSizeX) continue;
+            
+            // searching along the y axis
+            for (int y = -radius + 1; y <= radius; y++)
             {
+                // making sure the position is valid
+                if (chunkPositionY + y < 0 || chunkPositionY + y >= gridSizeY) continue;
                 
-
-                // searching along the y axis
-                for (int y = -radius; y <= radius; y++)
-                {
-                    // making sure the position is valid
-                    if (chunkPositionY + y >= 0 && chunkPositionY + y < gridSizeY)
+                // checking each chunk for occupancy
+                if (chunkPositionZ - radius >= 0) {
+                    valid = true;
+                    
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
                     {
-                        // checking each chunk for occupancy
-                        if (chunkPositionZ - radius >= 0) {
-                            valid = true;
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 0);
+                        double pointY = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 1);
+                        double pointZ = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
 
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 0);
-                                    double pointY = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 1);
-                                    double pointZ = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ - radius, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
-
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
-                        if (chunkPositionZ + radius < gridSizeZ) {
-                            valid = true;
-
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 0);
-                                    double pointY = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 1);
-                                    double pointZ = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
-
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
                     }
                 }
+                if (chunkPositionZ + radius < gridSizeZ) {
+                    valid = true;
 
-
-                // searching along the z axis
-                for (int z = -radius; z <= radius; z++)
-                {
-                    // making sure the position is valid
-                    if (chunkPositionZ + z >= 0 && chunkPositionZ + z < gridSizeZ)
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
                     {
-                        // checking each chunk for occupancy
-                        if (chunkPositionY - radius >= 0) {
-                            valid = true;
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 0);
+                        double pointY = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 1);
+                        double pointZ = chunks(chunkPositionX + x, chunkPositionY + y, chunkPositionZ + radius, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
 
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 0);
-                                    double pointY = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 1);
-                                    double pointZ = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
+                    }
+                }
+            }
 
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
-                        if (chunkPositionY + radius < gridSizeY) {
-                            valid = true;
 
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 0);
-                                    double pointY = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 1);
-                                    double pointZ = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
+            // searching along the z axis
+            for (int z = -radius; z <= radius; z++)
+            {
+                // making sure the position is valid
+                if (chunkPositionZ + z < 0 || chunkPositionZ + z >= gridSizeZ) continue;
 
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
+                // checking each chunk for occupancy
+                if (chunkPositionY - radius >= 0) {
+                    valid = true;
+
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
+                    {
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 0);
+                        double pointY = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 1);
+                        double pointZ = chunks(chunkPositionX + x, chunkPositionY - radius, chunkPositionZ + z, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
+
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
+                    }
+                }
+                if (chunkPositionY + radius < gridSizeY) {
+                    valid = true;
+
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
+                    {
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 0);
+                        double pointY = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 1);
+                        double pointZ = chunks(chunkPositionX + x, chunkPositionY + radius, chunkPositionZ + z, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
+
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
                     }
                 }
             }
         }
 
+
         // searching along the y and z axis
-        for (int y = -radius; y <= radius; y++)
+        for (int y = -radius + 1; y <= radius; y++)
         {
             // making sure the position is valid
-            if (chunkPositionY + y >= 0 && chunkPositionY + y < gridSizeY)
+            if (chunkPositionY + y < 0 || chunkPositionY + y >= gridSizeY) continue;
+
+            // searching through the z axis
+            for (int z = -radius + 1; z <= radius; z++)
             {
-                // searching through the z axis
-                for (int z = -radius; z <= radius; z++)
-                {
-                    // making sure the position is valid
-                    if (chunkPositionZ + z >= 0 && chunkPositionZ + z < gridSizeZ)
+                // making sure the position is valid
+                if (chunkPositionZ + z < 0 || chunkPositionZ + z >= gridSizeZ) continue;
+
+                // checking each chunk for occupancy
+                if (chunkPositionX - radius >= 0) {
+                    valid = true;
+                    
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
                     {
-                        // checking each chunk for occupancy
-                        if (chunkPositionX - radius >= 0) {
-                            valid = true;
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 0);
+                        double pointY = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 1);
+                        double pointZ = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
 
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 0);
-                                    double pointY = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 1);
-                                    double pointZ = chunks(chunkPositionX - radius, chunkPositionY + y, chunkPositionZ + z, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
+                    }
+                }
+                if (chunkPositionX + radius < gridSizeX) {
+                    valid = true;
 
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
-                        if (chunkPositionX + radius < gridSizeZ) {
-                            valid = true;
+                    // finding the number of points in the chunk
+                    int numPointsInChunk = chunkStackedSize(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z);
+                    // looping through all the points in the chunk
+                    for (int i = 0; i < numPointsInChunk; i++)
+                    {
+                        // checking the distance and checking if it's the new minimum
+                        double pointX = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 0);
+                        double pointY = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 1);
+                        double pointZ = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 2);
+                        double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
 
-                            // finding the number of points in the chunk
-                            int numPointsInChunk = chunkStackedSize(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z);
-                            if (numPointsInChunk) {
-                                // looping through all the points in the chunk
-                                for (int i = 0; i < numPointsInChunk; i++)
-                                {
-                                    // checking the distance and checking if it's the new minimum
-                                    double pointX = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 0);
-                                    double pointY = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 1);
-                                    double pointZ = chunks(chunkPositionX + radius, chunkPositionY + y, chunkPositionZ + z, i, 2);
-                                    double distance = GetDistance(pointX, pointY, pointZ, positionX, positionY, positionZ);
-
-                                    // checking if the point is the new closest
-                                    if (distance < minDistance) minDistance = distance;
-                                }
-                            }
-                        }
+                        // checking if the point is the new closest
+                        if (distance < minDistance) minDistance = distance;
                     }
                 }
             }
@@ -354,7 +350,8 @@ private:
 
 
         // returning the distance if points have been found
-        if (minDistance < 99999999.0 || !valid || radius >= maxSearchDepth) return minDistance;
+        if (minDistance < 99999999.0 || radius >= maxSearchDepth) return minDistance;
+        if (!valid) return 0;  // no valid positions are available (every chunk has been searched)       shouldn't really ever happen
 
         radius++;  // increasing the search radius
         return ExpandingSearch(chunkPositionX, chunkPositionY, chunkPositionZ, positionX, positionY, positionZ, radius, maxSearchDepth);
@@ -379,7 +376,7 @@ private:
     public: void AddChunk (int indexX, int indexY, int indexZ, double pointX, double pointY, double pointZ)
     {
         // getting the number of stacked points in the chunk
-        int numberStacked = chunkStackedSize(indexX, indexY, indexZ) + 1;
+        int numberStacked = chunkStackedSize(indexX, indexY, indexZ);
         chunkStackedSize(indexX, indexY, indexZ) += 1;
         
         // adding the point
@@ -393,7 +390,7 @@ private:
 
 
 // generates a sorted chunk grid from a list of points
-ChunkGrid GenerateChunks (CArray <double> points, double chunkSize, int numPoints)
+ChunkGrid GenerateChunks (CArray <double> &points, double chunkSize, int numPoints)
 {
     // finding the bounds of the data set
     double smallBoundX = 999999999.0;
@@ -433,7 +430,8 @@ ChunkGrid GenerateChunks (CArray <double> points, double chunkSize, int numPoint
     int gridSizeZ = (int) std::ceil(abs(largeBoundZ - smallBoundZ) / chunkSize) + 1;
 
     // creating the grid
-    ChunkGrid chunkGrid = ChunkGrid(gridSizeX, gridSizeY, gridSizeZ, smallBoundX, smallBoundY, smallBoundZ, largeBoundX, largeBoundY, largeBoundZ, chunkSize, CHUNK_BUFFER_SIZE);
+    int bufferSize = gridSizeX * gridSizeY * gridSizeZ;  // the maximum number of possible points per chunk
+    ChunkGrid chunkGrid = ChunkGrid(gridSizeX, gridSizeY, gridSizeZ, smallBoundX, smallBoundY, smallBoundZ, largeBoundX, largeBoundY, largeBoundZ, chunkSize, bufferSize);
 
     // going through all the points and adding them to the chunk grid
     for (int i = 0; i < numPoints; i++)
@@ -446,23 +444,23 @@ ChunkGrid GenerateChunks (CArray <double> points, double chunkSize, int numPoint
         // adding the point
         chunkGrid.AddChunk(chunkPosX, chunkPosY, chunkPosZ, points(i, 0), points(i, 1), points(i, 2));
     }
-
+    
     return chunkGrid;
 }
 
 
 
 // does a flood fill (used for calculating the signs)
-void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceField, CArray <short> &signedGrid, short sign, int &numFilled)
+void FloodFill (int startX, int startY, int startZ, CArray <double> &distanceField, CArray <int8_t> &signedGrid, int8_t sign, int &numFilled)
 {
     // all the directions neighbors can be in
-    CArray <double> changeX = CArray <double> (6);
+    CArray <int> changeX = CArray <int> (6);
     changeX.set_values(0);
     changeX(0) = 1; changeX(1) = -1;
-    CArray <double> changeY = CArray <double> (6);
+    CArray <int> changeY = CArray <int> (6);
     changeY.set_values(0);
     changeY(2) = 1; changeY(3) = -1;
-    CArray <double> changeZ = CArray <double> (6);
+    CArray <int> changeZ = CArray <int> (6);
     changeZ.set_values(0);
     changeZ(4) = 1; changeZ(5) = -1;
 
@@ -473,22 +471,22 @@ void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceFie
 
     // sizeX(1 + sizeY(1 + sizeZ))
     // an array for neighboring points (max size: sizeX + sizeY*sizeX + sizeX*sizeY*sizeZ)
-    int neighborsArraySize = gridSizeX * (1 + gridSizeY * (1 + gridSizeZ));
+    int neighborsArraySize = gridSizeX * (1 + gridSizeY * (1 + gridSizeZ));     // change these to the addresses of them defined in the calculate signs function to save time allocating memory repeatedly
     CArray <int> neighborsX = CArray <int> (neighborsArraySize);
     CArray <int> neighborsY = CArray <int> (neighborsArraySize);
     CArray <int> neighborsZ = CArray <int> (neighborsArraySize);
-
+    
     CArray <int> newNeighborsX = CArray <int> (neighborsArraySize);
     CArray <int> newNeighborsY = CArray <int> (neighborsArraySize);
-    CArray <int> newNeighborsZ = CArray <int> (neighborsArraySize);
+    CArray <int> newNeighborsZ = CArray <int> (neighborsArraySize);  // move this allocation earlier on
 
-    CArray <int> newNeighborsIndexes = CArray <int> (CHUNK_BUFFER_SIZE);
+    CArray <int> newNeighborsIndexes = CArray <int> (neighborsArraySize);
 
     // adding the initial point
     //int indexKey = indexX + (indexY + indexZ * gridSizeY) * gridSizeX;
-    neighborsX(0) = indexX;
-    neighborsY(0) = indexY;
-    neighborsZ(0) = indexZ;
+    neighborsX(0) = startX;
+    neighborsY(0) = startY;
+    neighborsZ(0) = startZ;
     int numNeighbors = 1;
 
     // itterating till all points are flood filled
@@ -516,9 +514,11 @@ void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceFie
                     for (int i = 0; i < 6; i++)
                     {
                         // getting the neighbors position
+                        //std::cout << "pre change" << std::endl;
                         int neighborXPos = xIndex + changeX(i);
                         int neighborYPos = yIndex + changeY(i);
                         int neighborZPos = zIndex + changeZ(i);
+                        //std::cout << "post change" << std::endl;
 
                         // checking if the point is valid
                         if (
@@ -528,19 +528,22 @@ void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceFie
                             ) {
 
                                 // adding the point to the new neighbors
-                                int indexKey = xIndex + (yIndex + zIndex * gridSizeY) * gridSizeX;
-                                newNeighborsX(indexKey) = xIndex;
-                                newNeighborsY(indexKey) = yIndex;
-                                newNeighborsZ(indexKey) = zIndex;
+                                int indexKey = neighborXPos + (neighborYPos + neighborZPos * gridSizeY) * gridSizeX;
+                                //std::cout << "ready to add points; " << neighborsArraySize << ";      " << neighborXPos << ", " << neighborYPos << ", " << neighborZPos << "        :" << indexKey << std::endl;
+                                newNeighborsX(indexKey) = neighborXPos;
+                                newNeighborsY(indexKey) = neighborYPos;
+                                newNeighborsZ(indexKey) = neighborZPos;
+                                //std::cout << "final adding: " << numNewNeighbors << "        : " <<  << std::endl;
                                 newNeighborsIndexes(numNewNeighbors) = indexKey;
                                 numNewNeighbors++;
+                                //std::cout << "points added" << std::endl;
 
                         }
                     }
                 }
             }
         }
-
+        
         // checking if the search/fill is complete
         if (!numNewNeighbors) return;
 
@@ -561,7 +564,7 @@ void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceFie
                 neighborsY(i) = newNeighborsY(indexKey);
                 neighborsZ(i) = newNeighborsZ(indexKey);
 
-                neighborsX(indexKey) = -1;  // the rest don't need to be cleared
+                newNeighborsX(indexKey) = -1;  // the rest don't need to be cleared
             }
         }
     }
@@ -571,20 +574,25 @@ void FloodFill (int indexX, int indexY, int indexZ, CArray <double> &distanceFie
 
 
 // calculates the internal/external sections of the object(s) which is represented by signs
-void CalculateSigns (CArray <double> &distanceField, CArray <short> &signedGrid)
+void CalculateSigns (CArray <double> &distanceField, CArray <int8_t> &signedGrid)
 {
     int numFilled = 0;  // the number of tiles filled (can be used to find the percentage calculated more accuretly)
+
+    // filling the initial space around the objects
+    FloodFill(0, 0, 0, distanceField, signedGrid, 1, numFilled);  // this isn't actually filling anything. This needs fixing
+    std::cout << "Sign at 0, 0, 0: " << (int) signedGrid(1, 1, 1) << std::endl;
+    std::cout << "Distance at 0, 0, 0: " << distanceField(1, 1, 1) << std::endl;
 
     // looping through every point on the grid to fill all regions
     for (int x = 0; x < SAMPLING_SPACE_SIZE[0]; x++)
     {
         // going over the y axis
-        for (int y = 0; y < SAMPLING_SPACE_OFFSET[1]; y++)
+        for (int y = 0; y < SAMPLING_SPACE_SIZE[1]; y++)
         {
-            short sign = 1;  // the entire perimeter (sides of the bounding box) should be void/air
+            int8_t sign = 1;  // the entire perimeter (sides of the bounding box) should be void/air
 
             // looping through the z axis
-            for (int z = 0; z < SAMPLING_SPACE_OFFSET[2]; z++)
+            for (int z = 0; z < SAMPLING_SPACE_SIZE[2]; z++)
             {
                 // checking if the sign is already known
                 if (signedGrid(x, y, z)) sign = signedGrid(x, y, z);
@@ -594,13 +602,14 @@ void CalculateSigns (CArray <double> &distanceField, CArray <short> &signedGrid)
                     {
                         // flood filling the area starting at the current point
                         sign *= -1;
+                        
+                        std::cout << "(before) filled: " << numFilled << "      sign is: " << (int) sign << "\nPosition: " << x << ", " << y << ", " << z << std::endl;
                         FloodFill(x, y, z, distanceField, signedGrid, sign, numFilled);
+                        std::cout << "(after) filled: " << numFilled << std::endl;
                     }
                 }
-
             }
         }
-
     }
 
     return;  // exiting the function
@@ -621,20 +630,20 @@ void FibonacciSphere (int samples, int &pointCloudStartingIndex, CArray <double>
     // going through all samples and generating the points
     for (int i = 0; i < samples; i++)
     {
-        double y = 1 - (i / (float) (samples - 1)) * 2.0;  // y goes from 1 to -1
+        double y = 1 - (i / (double) (samples - 1)) * 2.0;  // y goes from 1 to -1
         double radius = sqrt(1 - y*y);  // radius at y
 
-        double theta = phi * i;  // golden angle increment
+        double theta = phi * (double) i;  // golden angle increment
 
         // getting the rest of the position
         double x = cos(theta) * radius;
         double z = sin(theta) * radius;
 
         // adding the point
-        pointCloudStartingIndex++;
         pointCloud(pointCloudStartingIndex, 0) = x * scalingFactor + offset;
         pointCloud(pointCloudStartingIndex, 1) = y * scalingFactor + offset;
         pointCloud(pointCloudStartingIndex, 2) = z * scalingFactor + offset;
+        pointCloudStartingIndex++;
     }
 }
 
@@ -746,14 +755,14 @@ int main()
                 double newIsoContourLevel = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3 * ISO_CONTOUR_LEVEL;
                 
                 // updating the cloud size
-                cloudSizeX += newIsoContourLevel * 12;
-                cloudSizeY += newIsoContourLevel * 12;
-                cloudSizeZ += newIsoContourLevel * 12;
+                cloudSizeX += newIsoContourLevel * 4;
+                cloudSizeY += newIsoContourLevel * 4;
+                cloudSizeZ += newIsoContourLevel * 4;
 
                 // updating the grid offset and delta position scaling
-                double newGridOffsetX = lowestX - newIsoContourLevel * 6;
-                double newGridOffsetY = lowestY - newIsoContourLevel * 6;
-                double newGridOffsetZ = lowestZ - newIsoContourLevel * 6;
+                double newGridOffsetX = lowestX - newIsoContourLevel * 2;
+                double newGridOffsetY = lowestY - newIsoContourLevel * 2;
+                double newGridOffsetZ = lowestZ - newIsoContourLevel * 2;
 
                 newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
                 newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
@@ -774,6 +783,10 @@ int main()
                 SAMPLING_SPACE_OFFSET[0] = newGridOffsetX;
                 SAMPLING_SPACE_OFFSET[1] = newGridOffsetY;
                 SAMPLING_SPACE_OFFSET[2] = newGridOffsetZ;
+
+                std::cout << "sampling offset: " << SAMPLING_SPACE_OFFSET[0] << ", " << SAMPLING_SPACE_OFFSET[1] << ", " << SAMPLING_SPACE_OFFSET[2] << "\nIso: " << ISO_CONTOUR_LEVEL << "     deltas: " << 1/INVERSE_DELTA_X << ", " << 1/INVERSE_DELTA_Y << ", " << 1/INVERSE_DELTA_Z << "\nCloud size: " << cloudSizeX << ", " << cloudSizeY << ", " << cloudSizeZ << std::endl;
+                std::cout << "lowest: " << lowestX << ", " << lowestY << ", " << lowestZ << "\nHighest: " << largestX << ", " << largestY << ", " << largestZ << std::endl;
+                std::cout << "Chunk size: " << CHUNK_SIZE << std::endl;
             }
 
 
@@ -802,7 +815,7 @@ int main()
                     }
                 }
             }
-
+            
             std::cout << "found all distances" << std::endl;
 
             // save the distance field (too lazy, add later)
@@ -832,7 +845,8 @@ int main()
             // generating a shell around all objects
 
             // a grid for the signs
-            CArray <short> signedGrid = CArray <short> (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
+            CArray <int8_t> signedGrid = CArray <int8_t> (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
+            //signedGrid.set_values(0);
 
             std::cout << "ready to calculate signs" << std::endl;
 
@@ -845,6 +859,8 @@ int main()
             CArray <double> surfacePoints = CArray <double> (SURFACE_POINTS_BUFFER_SIZE, 3);
             int surfaceIndex = 0;  // the current index for the surface points array
 
+            std::cout << "calculating surface points" << std::endl;
+
             // itterating over every point and calculating if it's a surface point or not
             for (int x = 1; x < SAMPLING_SPACE_SIZE[0] - 1; x++)
             {
@@ -854,9 +870,9 @@ int main()
                     {
                         // making sure there's a hollow point next to the cell
                         if (
-                            signedGrid(x - 1, y, z) > 0 && signedGrid(x + 1, y, z) > 0 &&
-                            signedGrid(x, y - 1, z) > 0 && signedGrid(x, y + 1, z) > 0 &&
-                            signedGrid(x, y, z - 1) > 0 && signedGrid(x, y, z + 1) > 0
+                            signedGrid(x - 1, y, z) > 0 || signedGrid(x + 1, y, z) > 0 ||
+                            signedGrid(x, y - 1, z) > 0 || signedGrid(x, y + 1, z) > 0 ||
+                            signedGrid(x, y, z - 1) > 0 || signedGrid(x, y, z + 1) > 0
                             ) {
                             
                             // checking if the current position is inside an object / on the inside of the surface wall of an object
@@ -868,30 +884,24 @@ int main()
                                 surfacePoints(surfaceIndex, 2) = z;
                                 surfaceIndex++;
                             }
-
                         }
                     }
                 }
             }
 
-            std::cout << "surface points gathered" << std::endl;
+            std::cout << "generating chunks; Number of points: " << surfaceIndex << std::endl;
 
             // sorting the points into chunks
             ChunkGrid chunkedSurfacePoints = GenerateChunks(surfacePoints, SHELL_CHUNK_SIZE, surfaceIndex);
-            
-            std::cout << "surface points chunked" << std::endl;
-            
+
+            std::cout << "chunked the surface points" << std::endl;
+
             // correcting the iso contour sense the grid spacing has changed for this next step
-            double oldIsoContourLevel;  // how is this broken?????
-            std::cout << "old sio defined" << std::endl;
+            double oldIsoContourLevel;
             if (AUTO_SET && !LOADING_DISTANCE_FIELD_SAVE) {
-                std::cout << "into if" << std::endl;
                 oldIsoContourLevel = ISO_CONTOUR_LEVEL;
-                std::cout << "old iso set" << std::endl;
                 ISO_CONTOUR_LEVEL = ISO_CONTOUR_LEVEL * 3 / (1/INVERSE_DELTA_X + 1/INVERSE_DELTA_Y + 1/INVERSE_DELTA_Z);
-                std::cout << "iso set" << std::endl;
             }
-            std::cout << "auto calculated" << std::endl;
 
             // finding all the new distances
             for (int x = 0; x < SAMPLING_SPACE_SIZE[0]; x++)
@@ -900,21 +910,16 @@ int main()
                 {
                     for (int z = 0; z < SAMPLING_SPACE_SIZE[2]; z++)
                     {
-                        std::cout << "before distance check" << std::endl;
                         // finding the distance to the nearest point
                         double distance = chunkedSurfacePoints.FindNearestPoint(x, y, z);
 
-                        std::cout << "found nearest point" << std::endl;
                         // finding the correct sign for the current position
                         short sign = signedGrid(x, y, z);
                         if (distanceField(x, y, z) < oldIsoContourLevel && sign > -1) sign = -1;
                         if (!sign) sign = 1;
 
-                        std::cout << "found sign" << std::endl;
-
                         // updating the signed distance funciton with the distance and sign for the given position
-                        distanceField(x, y, z) = sqrt(distance) * (double) sign + ISO_CONTOUR_LEVEL;
-                        std::cout << "got signed distance" << std::endl;
+                        distanceField(x, y, z) = distance * (double) sign + ISO_CONTOUR_LEVEL;
                     }
                 }
             }
@@ -935,7 +940,7 @@ int main()
         if (!GENERATE_NEW_VERSION_SDF && USING_OLD_SDF)
         {
             // a grid for the signs
-            CArray <short> signedGrid = CArray <short> (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
+            CArray <int8_t> signedGrid = CArray <int8_t> (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
 
             // calculating the signs for the objects and distance field
             CalculateSigns(distanceField, signedGrid);
@@ -950,7 +955,7 @@ int main()
                 {
                     for (int z = 0; z < SAMPLING_SPACE_SIZE[2]; z++)
                     {
-                        signedDistanceField(x, y, z) = distanceField(x, y, z) * signedGrid(x, y, z);
+                        signedDistanceField(x, y, z) = distanceField(x, y, z) * (double) signedGrid(x, y, z);
                     }
                 }
             }
@@ -958,6 +963,30 @@ int main()
 
 
         // other stuff after this
+
+
+
+        // making a render of a slice of the object to figure out what's going on
+        int testZPosition = 50;
+        for (int x = 0; x < SAMPLING_SPACE_SIZE[0]; x+=2)
+        {
+            std::string layer = "";
+            for (int y = 0; y < SAMPLING_SPACE_SIZE[1]; y+=2)
+            {
+                int amount = (int) distanceField(x, y, testZPosition);
+                if (amount >= 0) {
+                    if (amount < 10) layer.append("  ");
+                    else if (amount < 100) layer.append(" ");
+                    else if (amount >= 1000) amount = 999;
+                } else {
+                    if (amount > -10) layer.append(" ");
+                    else if (amount <= -100) amount = -99;
+                }
+                layer.append(std::to_string(amount));
+                layer.append(",");
+            }
+            std::cout << layer << std::endl;
+        }
 
     }
     
