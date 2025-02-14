@@ -1,7 +1,15 @@
 #include <iostream>
 #include "matar.h"
 
-using namespace mtr;
+#include "marchingCubes.h"
+
+using namespace mtr;  // so I don't have to write mtr:: a thousand times per line
+
+
+//=========================================================================================================
+//                                          Program Settings
+//=========================================================================================================
+
 
 const bool LOADING_DISTANCE_FIELD_SAVE = false;
 const bool GENERATE_NEW_VERSION_SDF = true;
@@ -77,6 +85,11 @@ const double PI = 3.14159;
 
 
 
+//=========================================================================================================
+//                                        Basic Utility Functions
+//=========================================================================================================
+
+
 // utility functionsd
 double Min (double v1, double v2)
 {
@@ -91,19 +104,10 @@ double Max (double v1, double v2)
 }
 
 
-/*
 
-Something with the chunking system or chunk searching system is completely screwed up.
-
-The output has holes and sections that aren't being calculated right.
-
-This error is leading to a splotch at 0, 0, 0 and holes in the surface at lower iso levels.
-
-There aren't any points at 0, 0, 0; I checked and they're all positioned right.
-
-It's probably in the search system.
-
-*/
+//=========================================================================================================
+//                                       Distance Field Generation
+//=========================================================================================================
 
 
 // stores and sorts a set of points into a grid of chunks
@@ -450,6 +454,11 @@ ChunkGrid GenerateChunks (CArray <double> &points, double chunkSize, int numPoin
 
 
 
+//=========================================================================================================
+//                                          Sign Calculations
+//=========================================================================================================
+
+
 // does a flood fill (used for calculating the signs)
 void FloodFill (int startX, int startY, int startZ, CArray <double> &distanceField, CArray <int8_t> &signedGrid, int8_t sign, int &numFilled)
 {
@@ -617,9 +626,20 @@ void CalculateSigns (CArray <double> &distanceField, CArray <int8_t> &signedGrid
 
 
 
+//=========================================================================================================
+//                                       Data Loading & Saving
+//=========================================================================================================
+
+
 // data loading functions
 // add them here (don't feel like figuring it out right now)
 
+
+
+
+//=========================================================================================================
+//                                          Shape Generation
+//=========================================================================================================
 
 
 // creates a fibonacci sphere
@@ -647,6 +667,11 @@ void FibonacciSphere (int samples, int &pointCloudStartingIndex, CArray <double>
     }
 }
 
+
+
+//=========================================================================================================
+//                                          Main Script
+//=========================================================================================================
 
 
 // the main script
@@ -945,9 +970,6 @@ int main()
             // calculating the signs for the objects and distance field
             CalculateSigns(distanceField, signedGrid);
 
-            // creating a distance field with correct signs
-            CArray <double> signedDistanceField = CArray <double> (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
-
             // itterating through all points and correcting the signs
             for (int x = 0; x < SAMPLING_SPACE_SIZE[0]; x++)
             {
@@ -955,41 +977,19 @@ int main()
                 {
                     for (int z = 0; z < SAMPLING_SPACE_SIZE[2]; z++)
                     {
-                        signedDistanceField(x, y, z) = distanceField(x, y, z) * (double) signedGrid(x, y, z);
+                        distanceField(x, y, z) = distanceField(x, y, z) * (double) signedGrid(x, y, z);
                     }
                 }
             }
         }
 
-
-        // other stuff after this
-
-
-
-        // making a render of a slice of the object to figure out what's going on
-        int testZPosition = 50;
-        for (int x = 0; x < SAMPLING_SPACE_SIZE[0]; x+=2)
-        {
-            std::string layer = "";
-            for (int y = 0; y < SAMPLING_SPACE_SIZE[1]; y+=2)
-            {
-                int amount = (int) distanceField(x, y, testZPosition);
-                if (amount >= 0) {
-                    if (amount < 10) layer.append("  ");
-                    else if (amount < 100) layer.append(" ");
-                    else if (amount >= 1000) amount = 999;
-                } else {
-                    if (amount > -10) layer.append(" ");
-                    else if (amount <= -100) amount = -99;
-                }
-                layer.append(std::to_string(amount));
-                layer.append(",");
-            }
-            std::cout << layer << std::endl;
-        }
-
     }
-    
+
+
+    // running the code through marching cubes & returning it as an stl file
+    MarchingCubesToSTL(distanceField, ISO_CONTOUR_LEVEL, 1.0/INVERSE_DELTA_X, 1.0/INVERSE_DELTA_Y, 1.0/INVERSE_DELTA_Z);
+
+
     return 0;
 }
 
