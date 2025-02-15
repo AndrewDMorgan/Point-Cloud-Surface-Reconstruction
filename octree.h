@@ -37,6 +37,15 @@ private:
     int rootNodeReferenceIndex;
     int maxDepth;  // the max subdivision depth
 
+    CArray <double> depthSizeScalars;
+
+    // the offset orders for the children
+    int childOffsetOrderX[8] = {1, 1, 0, 0, 1, 1, 0, 0};
+    int childOffsetOrderY[8] = {0, 1, 1, 0, 0, 1, 1, 0};
+    int childOffsetOrderZ[8] = {0, 0, 0, 1, 1, 1, 1, 0};
+
+    CArray <int> offsetOrderChildIndex;
+
     // the constructor
     public: Octree (CArray <double> &_points, int _numPoints, double _sizeX, double _sizeY, double _sizeZ, double _offsetX, double _offsetY, double _offsetZ, int _maxDepth, int bufferSize)
     {
@@ -67,6 +76,24 @@ private:
 
         numberChildReferences = 0;
 
+        // pre-calculating all the scalars for the different depth levels (widths of the cells)
+        depthSizeScalars = CArray <double> (maxDepth);
+        for (int depth = 0; depth < maxDepth; depth++)
+        {
+            depthSizeScalars(depth) = pow(2, (double) depth);
+        }
+
+        // getting the reverse child offset order (for quick reverse look ups)
+        offsetOrderChildIndex = CArray <int> (8, 8, 8);
+        offsetOrderChildIndex(1, 0, 0) = 0;
+        offsetOrderChildIndex(1, 1, 0) = 1;
+        offsetOrderChildIndex(0, 1, 0) = 2;
+        offsetOrderChildIndex(0, 0, 1) = 3;
+        offsetOrderChildIndex(1, 0, 1) = 4;
+        offsetOrderChildIndex(1, 1, 1) = 5;
+        offsetOrderChildIndex(0, 1, 1) = 6;
+        offsetOrderChildIndex(0, 0, 0) = 7;
+
     }
 
     // subdivides the octree repeatidly
@@ -74,6 +101,7 @@ private:
     {
         // starting the subdivision and saving the final index to act as the inital root node
         rootNodeReferenceIndex = SubDivideRecursive(0, 0, 0, offsetX, offsetY, offsetZ, 1);
+        std::cout << "num children ->>>>  " << numberChildReferences << std::endl;
     }
 
     // subdivides the octree to fit the points      returns the reference index
@@ -81,7 +109,7 @@ private:
     {
 
         // getting the current size
-        double scaledDepth = pow(2, depth - 1);    // 2^x is the scaling fator for size    it goes /1 /2 /4 /8 /16...
+        double scaledDepth = depthSizeScalars(depth - 1);    // 2^x is the scaling fator for size    it goes /1 /2 /4 /8 /16...
         double tileSizeX = sizeX / scaledDepth;
         double tileSizeY = sizeY / scaledDepth;
         double tileSizeZ = sizeZ / scaledDepth;
@@ -91,12 +119,9 @@ private:
         tilePositionY += tileSizeY * shiftY;
         tilePositionZ += tileSizeZ * shiftZ;
 
-        //std::cout << "entering recursive itteration   0:1" << std::endl;
-
         // checking if the max depth was reached
         if (depth == maxDepth)
         {
-            std::cout << "max depth, adding child   1:1" << std::endl;
             childPointReferences(numberChildReferences, 0) = -1;
             childPointReferences(numberChildReferences, 1) = -1;
             childPointReferences(numberChildReferences, 2) = -1;
@@ -105,7 +130,6 @@ private:
             childPointReferences(numberChildReferences, 5) = -1;
             childPointReferences(numberChildReferences, 6) = -1;
             childPointReferences(numberChildReferences, 7) = -1;
-            std::cout << "added child references   1:2" << std::endl;
 
             // adding any possible remaining points
             for (int i = 0; i < points.dims(0); i++)
@@ -117,14 +141,12 @@ private:
                     points(i, 2) >= tilePositionZ && points(i, 2) < tilePositionZ + tileSizeZ
                 ) {
                     
-                    std::cout << "adding the point to buffer   1:3" << std::endl;
-                    std::cout << numberChildReferences << ", " << numPositionIndexs(numberChildReferences) << std::endl;
                     // adding the point
                     positionIndexesPlusOne(numberChildReferences, numPositionIndexs(numberChildReferences)) = i + 1;
+                    
                     numPositionIndexs(numberChildReferences)++;
                 }
             }
-            std::cout << "added points   1:4       " << numPositionIndexs(numberChildReferences) << std::endl;
 
             // returning the index
             numberChildReferences++;
@@ -132,8 +154,6 @@ private:
         }
         // starting at the root node, and dividing each cell until it no longer has a value or has only one value
         
-        //std::cout << "searching through points   0:2" << std::endl;
-
         // checking how many points are within the bounds of the cell
         int lastIndex = -1;
         int numberBoundingPoints = 0;
@@ -146,18 +166,14 @@ private:
                 points(i, 2) >= tilePositionZ && points(i, 2) < tilePositionZ + tileSizeZ
             ) {
                 
-                lastIndex = i;  // if there's only 1 point this is chosen
+                lastIndex = i;  // for if there's only 1 point this is chosen
                 numberBoundingPoints++;
             }
         }
 
-        //std::cout << "checking if there aren't any points   0:3" << std::endl;
-        
         // checking if there's no points in the cell
         if (!numberBoundingPoints)
         {
-            std::cout << "None left: " << numberChildReferences << "     Depth: " << depth << std::endl;
-
             childPointReferences(numberChildReferences, 0) = -1;
             childPointReferences(numberChildReferences, 1) = -1;
             childPointReferences(numberChildReferences, 2) = -1;
@@ -172,13 +188,9 @@ private:
             return numberChildReferences - 1;
         }
 
-        //std::cout << "checking if there is only a single point   0:4" << std::endl;
-        
         // checking if there's a single point in the cell
         if (numberBoundingPoints == 1)
         {
-            std::cout << "One left: " << numberChildReferences << "     Depth: " << depth << std::endl;
-
             childPointReferences(numberChildReferences, 0) = -1;
             childPointReferences(numberChildReferences, 1) = -1;
             childPointReferences(numberChildReferences, 2) = -1;
@@ -197,21 +209,18 @@ private:
             return numberChildReferences - 1;
         }
 
-        //std::cout << "getting new references   0:5" << std::endl;
-
         // continuing to sub divide into more cells
 
         // getting the references
-        int childIndex1 = SubDivideRecursive(1, 0, 0, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex2 = SubDivideRecursive(1, 1, 0, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex3 = SubDivideRecursive(0, 1, 0, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex4 = SubDivideRecursive(0, 0, 1, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex5 = SubDivideRecursive(1, 0, 1, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex6 = SubDivideRecursive(1, 1, 1, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex7 = SubDivideRecursive(0, 1, 1, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-        int childIndex8 = SubDivideRecursive(0, 0, 0, tilePositionX, tilePositionY, tilePositionZ, depth + 1);
-
-        std::cout << "adding child references: " << numberChildReferences << std::endl;
+        
+        int childIndex1 = SubDivideRecursive(childOffsetOrderX[0], childOffsetOrderY[0], childOffsetOrderZ[0], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex2 = SubDivideRecursive(childOffsetOrderX[1], childOffsetOrderY[1], childOffsetOrderZ[1], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex3 = SubDivideRecursive(childOffsetOrderX[2], childOffsetOrderY[2], childOffsetOrderZ[2], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex4 = SubDivideRecursive(childOffsetOrderX[3], childOffsetOrderY[3], childOffsetOrderZ[3], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex5 = SubDivideRecursive(childOffsetOrderX[4], childOffsetOrderY[4], childOffsetOrderZ[4], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex6 = SubDivideRecursive(childOffsetOrderX[5], childOffsetOrderY[5], childOffsetOrderZ[5], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex7 = SubDivideRecursive(childOffsetOrderX[6], childOffsetOrderY[6], childOffsetOrderZ[6], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
+        int childIndex8 = SubDivideRecursive(childOffsetOrderX[7], childOffsetOrderY[7], childOffsetOrderZ[7], tilePositionX, tilePositionY, tilePositionZ, depth + 1);
 
         // saving the points
         childPointReferences(numberChildReferences, 0) = childIndex1;
@@ -229,6 +238,65 @@ private:
         return numberChildReferences - 1;  // returning the index of the child node ( - 1 because the index was incremented just before)
     
     }
+
+
+    // grabs the leaf cell for a given position
+    public: int GetLeafIndex (double posX, double posY, double posZ)
+    {
+        int nodeIndex = rootNodeReferenceIndex;  // getting the root node
+        int lastNodeIndex;
+
+        // tracking the current position
+        double baseX = offsetX;
+        double baseY = offsetY;
+        double baseZ = offsetZ;
+
+        std::cout << "position: " << baseX << ", " << baseY << ", " << baseZ << std::endl;
+
+        double widthScalar, cellSizeX, cellSizeY, cellSizeZ;
+
+        // itterating through the levels of the tree till the leaf cell is found
+        for (int i = 1; i < maxDepth; i++)  // should leave once it's hit the depth limit
+        {
+            // getting the cell dimensions
+            widthScalar = depthSizeScalars(i);
+            cellSizeX = sizeX / widthScalar;
+            cellSizeY = sizeY / widthScalar;
+            cellSizeZ = sizeZ / widthScalar;
+
+            // getting the offset for the child
+            int childOffsetX = (int) ((posX - baseX) / cellSizeX);
+            int childOffsetY = (int) ((posY - baseY) / cellSizeY);
+            int childOffsetZ = (int) ((posZ - baseZ) / cellSizeZ);
+
+            std::cout << childOffsetX << ", " << childOffsetY << ", " << childOffsetZ << std::endl;
+
+            int childIndex = offsetOrderChildIndex(childOffsetX, childOffsetY, childOffsetZ);  // the child's index
+            
+            lastNodeIndex = nodeIndex;
+            nodeIndex = childPointReferences(nodeIndex, childIndex);  // the new node index
+            if (nodeIndex < 0) return lastNodeIndex;  // making sure the node won't go off of an empty cell
+
+            // adjusting the base position for the corner of the cell
+            baseX += cellSizeX * (double) childOffsetX;
+            baseY += cellSizeY * (double) childOffsetY;
+            baseZ += cellSizeZ * (double) childOffsetZ;
+
+            std::cout << "position: " << baseX << ", " << baseY << ", " << baseZ << std::endl;
+
+            // checking if the search has concluded
+            if (numPositionIndexs(nodeIndex)) return nodeIndex;  // checking if a value has been added -- only leaf nodes contain values
+
+        }
+
+        return nodeIndex;  // returning the found node
+    }
+
+
+    // gets the point at a given node index
+    public: double GetNodePointX (int nodeIndex, int bufferIndex) {return points(positionIndexesPlusOne(nodeIndex, bufferIndex) - 1, 0);}
+    public: double GetNodePointY (int nodeIndex, int bufferIndex) {return points(positionIndexesPlusOne(nodeIndex, bufferIndex) - 1, 1);}
+    public: double GetNodePointZ (int nodeIndex, int bufferIndex) {return points(positionIndexesPlusOne(nodeIndex, bufferIndex) - 1, 2);}
 
 };
 
