@@ -11,6 +11,6 @@ More information is present in the presentation I've been working on for this pr
 Presentation -> https://docs.google.com/presentation/d/1DU2jcye-E8gFEpKhPdf2-ofJ4YAFJ_p3borTgJbGals/edit?usp=sharing
 
 
-Compile using c++ 17
-g++ --std=c++17 main.cpp
+Compile using c++ 17:
+"g++ --std=c++17 main.cpp"
 
