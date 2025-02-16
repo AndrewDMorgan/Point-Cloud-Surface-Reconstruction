@@ -8,7 +8,9 @@ namespace Octree
     using namespace mtr;
 
 
-    // manages and stores the otree data structure
+    // manages and stores an otree data structure
+
+    template<typename T>  // the type for the internal data for each node to store/calculate; this allows a more efficent representation/calculation of specific functions within a specified domain
     class Octree
     {
 
@@ -17,6 +19,8 @@ namespace Octree
         CArray <int> childPointReferences;  // each cell has 8 values each being an index to the same array of the child
         CArray <int> positionIndexesPlusOne;  // (subtract 1 from the index to get the array index) the index of a point within a 1d array of the points being stored in the octree
         CArray <int> numPositionIndexs;  // the number of positions in each given grid cell (esentially a stack)
+
+        CArray <T> gridValues;  // the value for each node; calculated for a storage efficent data storage structure
 
         int numberChildReferences;
 
@@ -48,8 +52,9 @@ namespace Octree
             // is the maximum possible cells 4^depth?   or is it some sort of summation?
 
             // creating the point reference array that stores the octree
-            int max1DDepth = pow(4.0, (double) _maxDepth);//Factorial(_maxDepth);
+            int max1DDepth = pow(4.0, (double) _maxDepth);
             childPointReferences = CArray <int> (max1DDepth, 8);
+            gridValues = CArray <T> (max1DDepth);
 
             // creating the point reference array
             positionIndexesPlusOne = CArray <int> (max1DDepth, bufferSize);
@@ -295,14 +300,20 @@ namespace Octree
         }
 
 
-        // preforms a nearest neighbor search based on a given point
+        // gets the nearest neighbor but also gets the base leaf node
         public: double NearestNeighborSearch (double samplePositionX, double samplePositionY, double samplePositionZ)
         {
             // getting the leaf node to begin the search
             int leafNodeIndex = GetLeafIndex(samplePositionX, samplePositionY, samplePositionZ);
 
-            double distance = 99999999.0;  // the minimum distance found
+            return NearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ);  // returning the distance
+        }
 
+        // preforms a nearest neighbor search based on a given point
+        public: double NearestNeighborSearch (int leafNodeIndex, double samplePositionX, double samplePositionY, double samplePositionZ)
+        {
+            double distance = 99999999.0;  // the minimum distance found
+            
             // checking the initial point
             BranchSearch(depthIndexBufferSearch(lastLeafDepth), -1, distance, samplePositionX, samplePositionY, samplePositionZ);
             
@@ -356,6 +367,9 @@ namespace Octree
             return;
         }
 
+
+        // gets a specific grid values adress
+        public: T GetGridValue (int index) {return &gridValues(index);}
 
         // gets the point at a given node index
         public: double GetNodePointX (int nodeIndex, int bufferIndex) {return points(positionIndexesPlusOne(nodeIndex, bufferIndex) - 1, 0);}
