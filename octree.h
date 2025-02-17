@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include "matar.h"
 
+const int MAX_BINARY_SEARCH_ITTERATIONS = 250;
+
 
 namespace Octree
 {
@@ -8,9 +10,37 @@ namespace Octree
     using namespace mtr;
 
 
-    // manages and stores an otree data structure
+    // a binary search algerithm (returns the index)
+    template <typename T>  // has to be a type with greater than and less than opperators
+    int BinarySearch (CArray <T> &points, int arraySize, T searchValue)
+    {
+        // dividing the space in two until the position is found
+        int currentIndex = 0;
+        int dividedSize = arraySize;
 
-    template<typename T>  // the type for the internal data for each node to store/calculate; this allows a more efficent representation/calculation of specific functions within a specified domain
+        // looping till the value is found (or max itterations)
+        for (int i = 0; i < MAX_BINARY_SEARCH_ITTERATIONS; i++)
+        {
+
+            // dividing the space in two
+            int halfWidth = (int) (dividedSize * 0.5);
+            dividedSize -= halfWidth;
+
+            T middleValue = points(currentIndex + halfWidth);
+
+            int currentIndexOld = currentIndex;
+            // checking if the value is smaller or greater than the input value
+            if (middleValue == searchValue) return currentIndex + halfWidth;  // concluding the search once the value is found
+            if (middleValue < searchValue) currentIndex += halfWidth;  // checking which half the value is in the move the index; allowing for odd and even sized arrays
+
+        }
+
+        std::cout << "ran out of depth" << std::endl;
+        return currentIndex;  // returning the last index (the search ran out of search depth likely)
+    }
+
+
+    // manages and stores an otree data structure
     class Octree
     {
 
@@ -20,9 +50,11 @@ namespace Octree
         CArray <int> positionIndexesPlusOne;  // (subtract 1 from the index to get the array index) the index of a point within a 1d array of the points being stored in the octree
         CArray <int> numPositionIndexs;  // the number of positions in each given grid cell (esentially a stack)
 
-        CArray <T> gridValues;  // the value for each node; calculated for a storage efficent data storage structure
+        CArray <double> leafNodePositions;  // the global positions of the leaf nodes (different from the indexes)
+        CArray <int> leafNodeIndexes;
 
         int numberChildReferences;
+        int numberOfLeafNodes;
 
         CArray <double> points;  // the array of points being sorted into the grid
         int numPoints;
@@ -45,21 +77,35 @@ namespace Octree
         CArray <int> offsetOrderChildIndex;
         int lastLeafDepth;
 
-        // the constructor
-        public: Octree (CArray <double> &_points, int _numPoints, double _sizeX, double _sizeY, double _sizeZ, double _offsetX, double _offsetY, double _offsetZ, int _maxDepth, int bufferSize)
+        
+        // the constructors
+        public: Octree (const CArray <double> &_points, int _numPoints, double _sizeX, double _sizeY, double _sizeZ, double _offsetX, double _offsetY, double _offsetZ, int _maxDepth, int bufferSize)
+        {
+            int totalPoints = (int) pow(4.0, (double) _maxDepth);
+            OctreeConstructor(_points, _numPoints, _sizeX, _sizeY, _sizeZ, _offsetX, _offsetY, _offsetZ, _maxDepth, bufferSize, totalPoints);
+        }
+
+        // scales the memory for better performance (risky, it may not allocate enough, but that's unlikely)
+        public: Octree (const CArray <double> &_points, int _numPoints, double _sizeX, double _sizeY, double _sizeZ, double _offsetX, double _offsetY, double _offsetZ, int _maxDepth, int bufferSize, double memoryScalar)
+        {
+            int totalPoints = (int) (pow(4.0, (double) _maxDepth) * memoryScalar);
+            OctreeConstructor(_points, _numPoints, _sizeX, _sizeY, _sizeZ, _offsetX, _offsetY, _offsetZ, _maxDepth, bufferSize, totalPoints);
+        }
+
+        // finishes constructing the object/instance
+        public: void OctreeConstructor (const CArray <double> &_points, int _numPoints, double _sizeX, double _sizeY, double _sizeZ, double _offsetX, double _offsetY, double _offsetZ, int _maxDepth, int bufferSize, int maxNumberOfPositions)
         {
             
-            // is the maximum possible cells 4^depth?   or is it some sort of summation?
-
             // creating the point reference array that stores the octree
-            int max1DDepth = pow(4.0, (double) _maxDepth);
+            int max1DDepth = maxNumberOfPositions;
             childPointReferences = CArray <int> (max1DDepth, 8);
-            gridValues = CArray <T> (max1DDepth);
 
             // creating the point reference array
             positionIndexesPlusOne = CArray <int> (max1DDepth, bufferSize);
             numPositionIndexs = CArray <int> (max1DDepth);
             numPositionIndexs.set_values(0);  // making sure the default is 
+            leafNodePositions = CArray <double> (max1DDepth, 3);
+            leafNodeIndexes = CArray <int> (max1DDepth);
 
             maxDepth = _maxDepth;
             points = _points;  // storing the address of the points inside the class
@@ -98,18 +144,19 @@ namespace Octree
 
         }
 
+
         // subdivides the octree repeatidly
         public: void SubDivide()
         {
+            numberOfLeafNodes = 0;  // resetting the number of leaf notes
+
             // starting the subdivision and saving the final index to act as the inital root node
             rootNodeReferenceIndex = SubDivideRecursive(0, 0, 0, offsetX, offsetY, offsetZ, 1);
-            std::cout << "num children ->>>>  " << numberChildReferences << std::endl;
         }
 
         // subdivides the octree to fit the points      returns the reference index
         private: int SubDivideRecursive (int shiftX, int shiftY, int shiftZ, double tilePositionX, double tilePositionY, double tilePositionZ, int depth)
         {
-
             // getting the current size
             double scaledDepth = depthSizeScalars(depth - 1);    // 2^x is the scaling fator for size    it goes /1 /2 /4 /8 /16...
             double tileSizeX = sizeX / scaledDepth;
@@ -124,6 +171,13 @@ namespace Octree
             // checking if the max depth was reached
             if (depth == maxDepth)
             {
+                // adding the position of the leaf node
+                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
+                numberOfLeafNodes++;
+
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
                 childPointReferences(numberChildReferences, 2) = -1;
@@ -176,6 +230,13 @@ namespace Octree
             // checking if there's no points in the cell
             if (!numberBoundingPoints)
             {
+                // adding the position of the leaf node
+                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
+                numberOfLeafNodes++;
+
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
                 childPointReferences(numberChildReferences, 2) = -1;
@@ -193,6 +254,13 @@ namespace Octree
             // checking if there's a single point in the cell
             if (numberBoundingPoints == 1)
             {
+                // adding the position of the leaf node
+                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
+                numberOfLeafNodes++;
+
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
                 childPointReferences(numberChildReferences, 2) = -1;
@@ -284,7 +352,7 @@ namespace Octree
                 
                 lastNodeIndex = nodeIndex;
                 nodeIndex = childPointReferences(nodeIndex, childIndex);  // the new node index
-                if (nodeIndex < 0) return lastNodeIndex;  // making sure the node won't go off of an empty cell
+                if (nodeIndex < 0) {std::cout << "leaf node itterative position: " << baseX << ", " << baseY << ", " << baseZ << std::endl;return lastNodeIndex;}  // making sure the node won't go off of an empty cell
 
                 // adjusting the base position for the corner of the cell
                 baseX += cellSizeX * (double) childOffsetX;
@@ -292,7 +360,7 @@ namespace Octree
                 baseZ += cellSizeZ * (double) childOffsetZ;
 
                 // checking if the search has concluded
-                if (numPositionIndexs(nodeIndex)) return nodeIndex;  // checking if a value has been added -- only leaf nodes contain values
+                if (numPositionIndexs(nodeIndex)) {std::cout << "leaf node itterative position: " << baseX << ", " << baseY << ", " << baseZ << std::endl;return nodeIndex;}  // checking if a value has been added -- only leaf nodes contain values
 
             }
 
@@ -368,8 +436,34 @@ namespace Octree
         }
 
 
-        // gets a specific grid values adress
-        public: T GetGridValue (int index) {return &gridValues(index);}
+        // gets a leaf node
+        public: int GetLeafNodeFromLeafIndex (int leafIndex) {return leafNodeIndexes(leafIndex);}
+
+        // gets the number of leaf nodes
+        public: int GetNumberOfLeafNodes () {return numberOfLeafNodes;}
+
+        // gets the position of a given node in global space (from a node index)
+        public: CArray <double> GetLeafNodePosition (int leafNodeIndex)
+        {
+            CArray <double> outputPosition = CArray <double> (3);  // stores the final position that's calculated
+
+            // doing a reverse lookup to find the position  (based on the inherent method used to construct the indexes, they should be in assending order; thus a binary search is being used)
+            int leafIndex = BinarySearch <int> (leafNodeIndexes, numberOfLeafNodes, leafNodeIndex);
+
+            // getting the position
+            outputPosition(0) = leafNodePositions(leafIndex, 0);
+            outputPosition(1) = leafNodePositions(leafIndex, 1);
+            outputPosition(2) = leafNodePositions(leafIndex, 2);
+
+            return outputPosition;  // returning the position
+        }
+
+        // gets the leaf index from a general index
+        public: int GetLeafIndexFromIndex (int leafNodeIndex) {return BinarySearch <int> (leafNodeIndexes, numberOfLeafNodes, leafNodeIndex);}
+
+        // returns the size of the octree
+        public: int GetSize () {return numberChildReferences;}
+
 
         // gets the point at a given node index
         public: double GetNodePointX (int nodeIndex, int bufferIndex) {return points(positionIndexesPlusOne(nodeIndex, bufferIndex) - 1, 0);}
