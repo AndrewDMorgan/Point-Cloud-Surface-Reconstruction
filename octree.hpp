@@ -72,6 +72,7 @@ namespace Octree
 
         }
 
+        std::cout << "Binary Search Failed--Reached Max Depth: Octree.hpp  line 75 (Octree::BinarySearch)\n    Try increasing max search itterations ( MAX_BINARY_SEARCH_ITTERATIONS ) at top of header file" << std::endl;
         return currentIndex;  // returning the last index (the search ran out of search depth likely)
     }
 
@@ -355,7 +356,7 @@ namespace Octree
         {
             // creating the reference array
             int nodeRefferenceIndex = 0;
-            cellNeighborReferences = CArray <int> (numberChildReferences, maxDepth*maxDepth);
+            cellNeighborReferences = CArray <int> (numberChildReferences, maxDepth*maxDepth*3 + 3);  // pretty largeish array unfortunately
             cellNeighborBufferSize = CArray <int> (numberChildReferences);
             cellNeighborBufferSize.set_values(0);  // the intial buffer position is at 0 for all elements
 
@@ -380,9 +381,9 @@ namespace Octree
                 }
                 
                 // finding the position of the child node
-                double scaledDepth = depthSizeScalars(depth - 1);    // 2^x is the scaling fator for size    it goes /1 /2 /4 /8 /16...
+                double scaledDepth = depthSizeScalars(depth - 1);
                 double nodeSizeX = sizeX * scaledDepth;
-                double nodeSizeY = sizeY * scaledDepth;
+                double nodeSizeY = sizeY * scaledDepth;  // I'm guessing tracking the position is faster than a binary search to lookup the positional information
                 double nodeSizeZ = sizeZ * scaledDepth;
 
                 // getting the current position
@@ -401,18 +402,112 @@ namespace Octree
         private: void GenerateLeafNeighbors (const int depth, const int childIndex, const double posX, const double posY, const double posZ, int &nodeRefferenceIndex)
         {
             // getting the size of the node
-            double scaledDepth = depthSizeScalars(depth - 1);    // 2^x is the scaling fator for size    it goes /1 /2 /4 /8 /16...
+            double scaledDepth = depthSizeScalars(depth - 1);
             double nodeSizeX = sizeX * scaledDepth;
             double nodeSizeY = sizeY * scaledDepth;
             double nodeSizeZ = sizeZ * scaledDepth;
 
             // finding the center of the leaf node
             double searchPosX = posX + nodeSizeX * 0.5;
-            double searchPosY = posY + nodeSizeY * 0.5;
+            double searchPosY = posY + nodeSizeY * 0.5;  // i'm guessing it's  faster to track
             double searchPosZ = posZ + nodeSizeZ * 0.5;
 
-            // getting the path to this node
-            GetLeafIndex(searchPosX, searchPosY, searchPosZ);
+
+            // getting the path to this node (so it can be back-traced) along with the shifts to find neighboring sections
+            int ascentNodeIndex = rootNodeReferenceIndex;
+            int previousAscentNodeIndex;
+
+            double baseX = offsetX;
+            double baseY = offsetY;
+            double baseZ = offsetZ;
+
+            int childOffsetX, childOffsetY, childOffsetZ;
+            double widthScalar, cellSizeX, cellSizeY, cellSizeZ;
+            int ascentChildIndex;
+
+            depthIndexBufferSearch(0) = ascentNodeIndex;
+
+            // looping until the inital leaf-node has been found again (to generate the path)
+            for (int i = 1; i < depth; i++)  // by using the current depth, no if checks are needed to check for a leaf node sense it's already known this is a leaf node
+            {
+                lastLeafDepth = i;
+
+                // finding the size of the node
+                widthScalar = depthSizeScalars(i);
+                cellSizeX = sizeX * widthScalar;
+                cellSizeY = sizeY * widthScalar;
+                cellSizeZ = sizeZ * widthScalar;
+
+                // getting the current offset
+                childOffsetX = (int) ((searchPosX - baseX) / cellSizeX);
+                childOffsetY = (int) ((searchPosY - baseY) / cellSizeY);
+                childOffsetZ = (int) ((searchPosZ - baseZ) / cellSizeZ);
+
+                ascentChildIndex = offsetOrderChildIndex(childOffsetX, childOffsetY, childOffsetZ);  // the index of the child within a given parent node
+                ascentNodeIndex = childPointReferences(ascentNodeIndex, ascentChildIndex);
+
+                // adjusting the base position
+                baseX += cellSizeX * (double) childOffsetX;
+                baseY += cellSizeY * (double) childOffsetY;
+                baseZ += cellSizeZ * (double) childOffsetZ;
+
+
+                // adding the node to the path
+                depthIndexBufferSearch(i) = ascentNodeIndex;
+            }
+
+
+            // finding the neighbors within the child's parent node
+                // find the nodes offset in each axis, and do 1 - offset to get the neighboring node
+            
+            // getting the current offset to find the opposing neighbors
+            childOffsetX = (int) ((searchPosX - baseX) / nodeSizeX);
+            childOffsetY = (int) ((searchPosY - baseY) / nodeSizeY);
+            childOffsetZ = (int) ((searchPosZ - baseZ) / nodeSizeZ);
+            
+            // adding the nodes based on 1 - the offset for each axis
+            cellNeighborReferences(childIndex, 0) = childPointReferences(
+                    depthIndexBufferSearch(depth - 1),
+                    offsetOrderChildIndex(1 - childOffsetX, childOffsetY, childOffsetZ)
+                );  // oposing x axis neighbor ^
+            cellNeighborReferences(childIndex, 1) = childPointReferences(
+                    depthIndexBufferSearch(depth - 1),
+                    offsetOrderChildIndex(childOffsetX, 1 - childOffsetY, childOffsetZ)
+                );  // oposing y axis neighbor ^
+            cellNeighborReferences(childIndex, 2) = childPointReferences(
+                    depthIndexBufferSearch(depth - 1),
+                    offsetOrderChildIndex(childOffsetX, childOffsetY, 1 - childOffsetZ)
+                );  // oposing z axis neighbor ^
+            cellNeighborBufferSize(childIndex) = 3;  // three nodes were added; it's not possible for anything to already be in the buffer
+
+
+            // finding the other 3 side neighbors
+            //
+
+            /*
+            what happens if the other cell is smaller????
+            */
+
+            // finding the other children of the parten of this node
+            /*int node;
+            double nodePosX, nodePosY, nodePosZ;
+            for (int i = 0; i < 8; i++)  // looping through all 8 children
+            {
+                node = childPointReferences(depthIndexBufferSearch(depth - 1), i);  // finding the neighboring child
+                if (node == childIndex) continue;  // skipping the leaf node that's currently being looked at
+
+                nodePosX = posX + (double) childOffsetOrderX[i] * depthSizeScalars(depth - 2);
+                nodePosY = posY + (double) childOffsetOrderY[i] * depthSizeScalars(depth - 2);  // getting the position of the child
+                nodePosZ = posZ + (double) childOffsetOrderZ[i] * depthSizeScalars(depth - 2);
+
+                // checking if the point borders this node or not
+                if (
+                    false
+                ) {}
+            }*/
+            
+            // finding the other 3 cells (1 from the larger cube above, 1 to the side, and 1 to the front)
+            // how do you back trace until it shifts in the correcct direction? Have a way to see shifts and just look at that?
 
             // going back down the path and branching out to the neighbors
 
@@ -462,9 +557,8 @@ namespace Octree
             // itterating through the levels of the tree till the leaf cell is found
             for (int i = 1; i < maxDepth; i++)  // should leave once it's hit the depth limit
             {
-                lastLeafDepth = i;
-                depthIndexBufferSearch(i) = nodeIndex;
-
+                lastLeafDepth = i;  // tracking the depth
+                
                 // getting the cell dimensions
                 widthScalar = depthSizeScalars(i);
                 cellSizeX = sizeX * widthScalar;
@@ -480,7 +574,10 @@ namespace Octree
                 
                 lastNodeIndex = nodeIndex;
                 nodeIndex = childPointReferences(nodeIndex, childIndex);  // the new node index
-                if (nodeIndex < 0) return lastNodeIndex;  // making sure the node won't go off of an empty cell
+                if (nodeIndex < 0) {  // making sure the node won't go off of an empty cell
+                    nodeIndex = lastNodeIndex;
+                    break;
+                }
 
                 // adjusting the base position for the corner of the cell
                 baseX += cellSizeX * (double) childOffsetX;
@@ -488,9 +585,15 @@ namespace Octree
                 baseZ += cellSizeZ * (double) childOffsetZ;
 
                 // checking if the search has concluded
-                if (numPositionIndexs(nodeIndex)) return nodeIndex;  // checking if a value has been added -- only leaf nodes contain values
+                if (numPositionIndexs(nodeIndex)) break;  // checking if a value has been added -- only leaf nodes contain values
+
+                // adding the node to the path
+                depthIndexBufferSearch(i) = nodeIndex;
 
             }
+
+            // adding the node to the path
+            depthIndexBufferSearch(lastLeafDepth) = nodeIndex;
 
             return nodeIndex;  // returning the found node
         }
@@ -530,17 +633,6 @@ namespace Octree
                 currentDepth--;
                 BranchSearch(depthIndexBufferSearch(currentDepth), depthIndexBufferSearch(currentDepth + 1), distance, samplePositionX, samplePositionY, samplePositionZ);
             }
-
-            // checking if the current search may have missed a position outside it's radius
-            /*if (differenceInDepth > 0)
-            {
-                // running an extended search
-                for (int i = 0; i < differenceInDepth; i++)
-                {
-                    currentDepth--;
-                    BranchSearch(depthIndexBufferSearch(currentDepth), depthIndexBufferSearch(currentDepth + 1), distance, samplePositionX, samplePositionY, samplePositionZ);
-                }
-            }*/
 
             // returning the distance
             return sqrt(distance);
