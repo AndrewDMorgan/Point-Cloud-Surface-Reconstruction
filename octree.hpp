@@ -4,37 +4,6 @@
 // the maximum depth a binary search can go to
 const int MAX_BINARY_SEARCH_ITTERATIONS = 250;
 
-/*
-
-create a hashed-grid based on the leaf positions relative to the x/y/z coords for that portion of the octree
-use this to search as it's space is still reduced but also easier to acsess
-
-how do you find the x/y/z coords of a global offset of positions?
-
-info would need to be stored about the intial offsets of each row/collumn/slice and how large each cell is so that it can be undone in order to back trace to get to a neighboring cell
-
-
-use some form of hashing with the leaf nodes to find a better/faster nearest neighbor search
-https://link.springer.com/article/10.1007/s00138-017-0889-4
-
-
-
-
-create an array with pointers to all neighboring cells
-
-in search function:
-    use another array that store whenever a cell is visisted during a nn search.
-    traverse the array counting the distance across each node (figure out that too) to find the current distance to stop at the limit when expanding (whenever a point is found, the distance can simply be shrunk until no remaining cells exsist. This can all be done recursively)
-
-
-to find a neighbor node, could you just find the coord of the center of the face of the urrent node and shift it by some small value and solve for a leaf node?
-    How do you deal with finding multiple neighbors? do you find the larger cell of the same depth than add all leaf nodes bellow?
-    
-    Go to the corner of the cell plus a tiny offset (small enough it can't jump more than a cell)
-    go down until equal to the current depth
-    find all leaf nodes falling under (that still touch the face on at least one side) that node and add them
-
-*/
 
 
 namespace Octree
@@ -67,8 +36,8 @@ namespace Octree
             if (middleValue < searchValue) currentIndex += halfWidth;  // checking which half the value is in the move the index; allowing for odd and even sized arrays
         }
 
-        std::cout << "Binary Search Failed--Reached Max Depth: Octree.hpp  line 70 (Octree::BinarySearch)\n    Try increasing max search itterations ( MAX_BINARY_SEARCH_ITTERATIONS ) at top of header file" << std::endl;
-        return currentIndex;  // returning the last index (the search ran out of search depth likely)
+        std::cout << "Binary Search Failed--Reached Max Depth: Octree.hpp; Octree::BinarySearch\n    Try increasing max search itterations ( MAX_BINARY_SEARCH_ITTERATIONS ) at top of header file" << std::endl;
+        return -1;  // returning the last index (the search ran out of search depth likely)
     }
 
 
@@ -414,8 +383,6 @@ namespace Octree
             // looping until the inital leaf-node has been found again (to generate the path)
             for (int i = 1; i < depth; i++)  // by using the current depth, no if checks are needed to check for a leaf node sense it's already known this is a leaf node
             {
-                lastLeafDepth = i;
-
                 // finding the size of the node
                 widthScalar = depthSizeScalars(i);
                 cellSizeX = sizeX * widthScalar;
@@ -423,9 +390,9 @@ namespace Octree
                 cellSizeZ = sizeZ * widthScalar;
 
                 // getting the current offset
-                childOffsetX = (int) ((searchPosX - baseX) / cellSizeX);
-                childOffsetY = (int) ((searchPosY - baseY) / cellSizeY);
-                childOffsetZ = (int) ((searchPosZ - baseZ) / cellSizeZ);
+                childOffsetX = static_cast <int> ((searchPosX - baseX) / cellSizeX);
+                childOffsetY = static_cast <int> ((searchPosY - baseY) / cellSizeY);
+                childOffsetZ = static_cast <int> ((searchPosZ - baseZ) / cellSizeZ);
 
                 // cashing the shift
                 shiftBuffer(i, 0) = childOffsetX;
@@ -436,9 +403,9 @@ namespace Octree
                 ascentNodeIndex = childPointReferences(ascentNodeIndex, ascentChildIndex);
 
                 // adjusting the base position
-                baseX += cellSizeX * (double) childOffsetX;
-                baseY += cellSizeY * (double) childOffsetY;
-                baseZ += cellSizeZ * (double) childOffsetZ;
+                baseX += cellSizeX * static_cast <double> (childOffsetX);
+                baseY += cellSizeY * static_cast <double> (childOffsetY);
+                baseZ += cellSizeZ * static_cast <double> (childOffsetZ);
 
                 // adding the node to the path
                 depthIndexBufferSearch(i) = ascentNodeIndex;
@@ -447,9 +414,9 @@ namespace Octree
             depthIndexBufferSearch(depth) = childIndex;
 
             // getting the current offset to find the opposing neighbors
-            childOffsetX = (int) ((searchPosX - baseX) / nodeSizeX);
-            childOffsetY = (int) ((searchPosY - baseY) / nodeSizeY);
-            childOffsetZ = (int) ((searchPosZ - baseZ) / nodeSizeZ);
+            childOffsetX = static_cast <int> ((searchPosX - baseX) / nodeSizeX);
+            childOffsetY = static_cast <int> ((searchPosY - baseY) / nodeSizeY);
+            childOffsetZ = static_cast <int> ((searchPosZ - baseZ) / nodeSizeZ);
             
             // cashing the shift
             shiftBuffer(depth, 0) = childOffsetX;
@@ -602,9 +569,9 @@ namespace Octree
                 cellSizeZ = sizeZ * widthScalar;
 
                 // getting the offset for the child
-                childOffsetX = (int) ((posX - baseX) / cellSizeX);
-                childOffsetY = (int) ((posY - baseY) / cellSizeY);
-                childOffsetZ = (int) ((posZ - baseZ) / cellSizeZ);
+                childOffsetX = static_cast <int> ((posX - baseX) / cellSizeX);
+                childOffsetY = static_cast <int> ((posY - baseY) / cellSizeY);
+                childOffsetZ = static_cast <int> ((posZ - baseZ) / cellSizeZ);
 
                 childIndex = offsetOrderChildIndex(childOffsetX, childOffsetY, childOffsetZ);  // the child's index
                 
@@ -616,9 +583,9 @@ namespace Octree
                 }
 
                 // adjusting the base position for the corner of the cell
-                baseX += cellSizeX * (double) childOffsetX;
-                baseY += cellSizeY * (double) childOffsetY;
-                baseZ += cellSizeZ * (double) childOffsetZ;
+                baseX += cellSizeX * static_cast <double> (childOffsetX);
+                baseY += cellSizeY * static_cast <double> (childOffsetY);
+                baseZ += cellSizeZ * static_cast <double> (childOffsetZ);
 
                 // checking if the search has concluded
                 if (numPositionIndexs(nodeIndex)) break;  // checking if a value has been added -- only leaf nodes contain values
@@ -647,25 +614,18 @@ namespace Octree
         // preforms a nearest neighbor search based on a given point
         public: double NearestNeighborSearch (int leafNodeIndex, double samplePositionX, double samplePositionY, double samplePositionZ)
         {
-            double distance = 99999999.0;  // the minimum distance found
+            double distance = std::numeric_limits<double>::max();  // the minimum distance found
             
             // checking the initial point
             BranchSearch(depthIndexBufferSearch(lastLeafDepth), -1, distance, samplePositionX, samplePositionY, samplePositionZ);
             
             // itterating over the neighboring cells
             int currentDepth = lastLeafDepth;
-            double distanceTraveledX = 0.0;
-            double distanceTraveledY = 0.0;
-            double distanceTraveledZ = 0.0;
             for (int i = 0; i < lastLeafDepth; i++)
             {
-                distanceTraveledX += sizeX * depthSizeScalars(currentDepth - 1);  // tracking the distance traveled between cells (so an accuret extended search can be performed)
-                distanceTraveledY += sizeY * depthSizeScalars(currentDepth - 1);
-                distanceTraveledZ += sizeZ * depthSizeScalars(currentDepth - 1);
+                if (distance < std::numeric_limits<double>::max()) break;  // if any point is found the distance is returned
 
-                if (distance < 99999999.0) break;  // if any point is found the distance is returned
-
-                // starting a new search
+                // starting a new search through the whole branch
                 currentDepth--;
                 BranchSearch(depthIndexBufferSearch(currentDepth), depthIndexBufferSearch(currentDepth + 1), distance, samplePositionX, samplePositionY, samplePositionZ);
             }
@@ -674,7 +634,7 @@ namespace Octree
             return sqrt(distance);
         }
 
-        // searching down the entirety of a branch
+        // searching down the entirety of a branch      depth-first approach (goes fully down the first node, then expands to the surrounding nodes and goes to the max depth, and so on)
         private: void BranchSearch (int startingIndex, int voidedIndex, double &distance, double &samplePositionX, double &samplePositionY, double &samplePositionZ)
         {
             // going to each child and casting a new branch
