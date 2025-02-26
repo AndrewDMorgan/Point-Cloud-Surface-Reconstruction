@@ -20,10 +20,6 @@ https://link.springer.com/article/10.1007/s00138-017-0889-4
 
 
 
-
-
-
-
 create an array with pointers to all neighboring cells
 
 in search function:
@@ -56,23 +52,22 @@ namespace Octree
         int dividedSize = arraySize;
 
         // looping till the value is found (or max itterations)
+        int halfWidth, currentIndexOld;
         for (int i = 0; i < MAX_BINARY_SEARCH_ITTERATIONS; i++)
         {
-
             // dividing the space in two
-            int halfWidth = (int) (dividedSize * 0.5);
+            halfWidth = (int) (dividedSize * 0.5);
             dividedSize -= halfWidth;
 
             T middleValue = points(currentIndex + halfWidth);
 
-            int currentIndexOld = currentIndex;
+            currentIndexOld = currentIndex;
             // checking if the value is smaller or greater than the input value
             if (middleValue == searchValue) return currentIndex + halfWidth;  // concluding the search once the value is found
             if (middleValue < searchValue) currentIndex += halfWidth;  // checking which half the value is in the move the index; allowing for odd and even sized arrays
-
         }
 
-        std::cout << "Binary Search Failed--Reached Max Depth: Octree.hpp  line 75 (Octree::BinarySearch)\n    Try increasing max search itterations ( MAX_BINARY_SEARCH_ITTERATIONS ) at top of header file" << std::endl;
+        std::cout << "Binary Search Failed--Reached Max Depth: Octree.hpp  line 70 (Octree::BinarySearch)\n    Try increasing max search itterations ( MAX_BINARY_SEARCH_ITTERATIONS ) at top of header file" << std::endl;
         return currentIndex;  // returning the last index (the search ran out of search depth likely)
     }
 
@@ -361,57 +356,38 @@ namespace Octree
             cellNeighborBufferSize.set_values(0);  // the intial buffer position is at 0 for all elements
 
             // finding all leaf nodes and then finding their neighbors
-            NodeReferenceCacheRecursiveAscent(1, rootNodeReferenceIndex, offsetX, offsetY, offsetZ, nodeRefferenceIndex);
+            NodeReferenceCacheRecursiveAscent(1, rootNodeReferenceIndex, nodeRefferenceIndex);
 
             return;  // ending the function
         }
 
         // recursively jumps down all branches and starts the generation of the leaf nodes' neighbors
-        private: void NodeReferenceCacheRecursiveAscent (const int depth, const int childIndex, double posX, double posY, double posZ, int &nodeRefferenceIndex)
+        private: void NodeReferenceCacheRecursiveAscent (const int depth, const int childIndex, int &nodeRefferenceIndex)
         {
-            int newPosX, newPosY, newPosZ;
-
             // going through all children for this node
             for (int i = 0; i < 8; i++)
             {
                 // checking if the child is a leaf node
                 if (childPointReferences(childIndex, i) == -1) {
-                    GenerateLeafNeighbors(depth, childIndex, posX, posY, posZ, nodeRefferenceIndex);  // generating the cells neighbors
+                    GenerateLeafNeighbors(depth, childIndex, nodeRefferenceIndex);  // generating the cells neighbors
                     return;  // the leaf node had all neighbors generated, no need to continue
                 }
-                
-                // finding the position of the child node
-                double scaledDepth = depthSizeScalars(depth - 1);
-                double nodeSizeX = sizeX * scaledDepth;
-                double nodeSizeY = sizeY * scaledDepth;  // I'm guessing tracking the position is faster than a binary search to lookup the positional information
-                double nodeSizeZ = sizeZ * scaledDepth;
-
-                // getting the current position
-                newPosX = posX + nodeSizeX * (double) childOffsetOrderX[i];
-                newPosY = posY + nodeSizeY * (double) childOffsetOrderY[i];
-                newPosZ = posZ + nodeSizeZ * (double) childOffsetOrderZ[i];
 
                 // continuning the recursive ascent
-                NodeReferenceCacheRecursiveAscent(depth + 1, childPointReferences(childIndex, i), newPosX, newPosY, newPosZ, nodeRefferenceIndex);
+                NodeReferenceCacheRecursiveAscent(depth + 1, childPointReferences(childIndex, i), nodeRefferenceIndex);
             }
 
             return;  // ending the function
         }
 
         // generates the neighbors for a given leaf node
-        private: void GenerateLeafNeighbors (const int depth, const int childIndex, const double posX, const double posY, const double posZ, int &nodeRefferenceIndex)
+        private: void GenerateLeafNeighbors (const int depth, const int childIndex, int &nodeRefferenceIndex)
         {
             // getting the size of the node
-            double scaledDepth = depthSizeScalars(depth - 1);
+            double scaledDepth = depthSizeScalars(depth);
             double nodeSizeX = sizeX * scaledDepth;
             double nodeSizeY = sizeY * scaledDepth;
             double nodeSizeZ = sizeZ * scaledDepth;
-
-            // finding the center of the leaf node
-            double searchPosX = posX + nodeSizeX * 0.5;
-            double searchPosY = posY + nodeSizeY * 0.5;  // i'm guessing it's  faster to track
-            double searchPosZ = posZ + nodeSizeZ * 0.5;
-
 
             // getting the path to this node (so it can be back-traced) along with the shifts to find neighboring sections
             int ascentNodeIndex = rootNodeReferenceIndex;
@@ -426,6 +402,14 @@ namespace Octree
             int ascentChildIndex;
 
             depthIndexBufferSearch(0) = ascentNodeIndex;
+
+            // stores the offset values
+            CArray <int> shiftBuffer = CArray <int> (depth + 1, 3);
+
+            CArray <double> trueNodePosition = GetLeafNodePosition(childIndex);  // probably a lot slower, but I couldn't figure out how to get the position tracking to work for some reason and the whole generation algerithm is running fast enough considering it's a one time operation
+            double searchPosX = trueNodePosition(0);
+            double searchPosY = trueNodePosition(1);
+            double searchPosZ = trueNodePosition(2);
 
             // looping until the inital leaf-node has been found again (to generate the path)
             for (int i = 1; i < depth; i++)  // by using the current depth, no if checks are needed to check for a leaf node sense it's already known this is a leaf node
@@ -443,6 +427,11 @@ namespace Octree
                 childOffsetY = (int) ((searchPosY - baseY) / cellSizeY);
                 childOffsetZ = (int) ((searchPosZ - baseZ) / cellSizeZ);
 
+                // cashing the shift
+                shiftBuffer(i, 0) = childOffsetX;
+                shiftBuffer(i, 1) = childOffsetY;
+                shiftBuffer(i, 2) = childOffsetZ;
+
                 ascentChildIndex = offsetOrderChildIndex(childOffsetX, childOffsetY, childOffsetZ);  // the index of the child within a given parent node
                 ascentNodeIndex = childPointReferences(ascentNodeIndex, ascentChildIndex);
 
@@ -451,20 +440,22 @@ namespace Octree
                 baseY += cellSizeY * (double) childOffsetY;
                 baseZ += cellSizeZ * (double) childOffsetZ;
 
-
                 // adding the node to the path
                 depthIndexBufferSearch(i) = ascentNodeIndex;
             }
 
+            depthIndexBufferSearch(depth) = childIndex;
 
-            // finding the neighbors within the child's parent node
-                // find the nodes offset in each axis, and do 1 - offset to get the neighboring node
-            
             // getting the current offset to find the opposing neighbors
             childOffsetX = (int) ((searchPosX - baseX) / nodeSizeX);
             childOffsetY = (int) ((searchPosY - baseY) / nodeSizeY);
             childOffsetZ = (int) ((searchPosZ - baseZ) / nodeSizeZ);
             
+            // cashing the shift
+            shiftBuffer(depth, 0) = childOffsetX;
+            shiftBuffer(depth, 1) = childOffsetY;
+            shiftBuffer(depth, 2) = childOffsetZ;
+
             // adding the nodes based on 1 - the offset for each axis
             cellNeighborReferences(childIndex, 0) = childPointReferences(
                     depthIndexBufferSearch(depth - 1),
@@ -480,50 +471,95 @@ namespace Octree
                 );  // oposing z axis neighbor ^
             cellNeighborBufferSize(childIndex) = 3;  // three nodes were added; it's not possible for anything to already be in the buffer
 
+            // getting all nodes on the oposing faces of other parent nodes (not under the main parent node that harbors the first 3)
+            FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 0);
+            FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 1);
+            FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 2);
 
-            // finding the other 3 side neighbors
-            //
+            return;  // ending the function
+        }
 
-            /*
-            what happens if the other cell is smaller????
-            */
+        // finds a given oposing face based on the axis; x, y, or z)
+        private: void FindChildFace (const int depth, const int childIndex, int &nodeRefferenceIndex, const CArray <int> &shiftBuffer, const int axis)
+        {
+            // going up the tree until the correct shift value has been found
+            int lookingForShift = 1 - shiftBuffer(depth, axis);
 
-            // finding the other children of the parten of this node
-            /*int node;
-            double nodePosX, nodePosY, nodePosZ;
-            for (int i = 0; i < 8; i++)  // looping through all 8 children
+            // going up the tree until the shift is found
+            int newChildIndex;
+            for (int i = depth - 1; i > 0; i--)
             {
-                node = childPointReferences(depthIndexBufferSearch(depth - 1), i);  // finding the neighboring child
-                if (node == childIndex) continue;  // skipping the leaf node that's currently being looked at
+                // checking if it's the correct shift
+                if (shiftBuffer(i, axis) == lookingForShift) {
+                    // finding the offset order
+                    int offsetIndex, indexI, indexJ;
+                    if (!axis) {
+                        offsetIndex = offsetOrderChildIndex(shiftBuffer(depth, axis), 0, 0);
+                        indexI = 1; indexJ = 2;
+                    }
+                    else if (axis == 1) {
+                        offsetIndex = offsetOrderChildIndex(0, shiftBuffer(depth, axis), 0);  // finding the correct order based on the current axis
+                        indexI = 0; indexJ = 2;
+                    }
+                    else {
+                        offsetIndex = offsetOrderChildIndex(0, 0, shiftBuffer(depth, axis));
+                        indexI = 0; indexJ = 1;
+                    }
 
-                nodePosX = posX + (double) childOffsetOrderX[i] * depthSizeScalars(depth - 2);
-                nodePosY = posY + (double) childOffsetOrderY[i] * depthSizeScalars(depth - 2);  // getting the position of the child
-                nodePosZ = posZ + (double) childOffsetOrderZ[i] * depthSizeScalars(depth - 2);
+                    // getting the face nodes
+                    newChildIndex = childPointReferences(depthIndexBufferSearch(i), offsetIndex);
+                    if (newChildIndex == -1) return;  // ending early, there is no valid face on this side?
+                    GetChildFaceNodesRecursive(
+                            depth,
+                            newChildIndex,
+                            nodeRefferenceIndex, shiftBuffer, axis,
+                            indexI, indexJ
+                        );
 
-                // checking if the point borders this node or not
-                if (
-                    false
-                ) {}
-            }*/
+                    return;  // ending the search sense the face was found
+                }
+            }
+
+            return;  // ending the function, no valid faces opose this side (likely the node was on the very very edge)
+        }
+
+        // gets all the nodes on a given face
+        private: void GetChildFaceNodesRecursive (const int depth, const int childIndex, int &nodeRefferenceIndex, const CArray <int> &shiftBuffer, const int axis, const int indexI, const int indexJ)
+        {
+            // finding the offsets
+            CArray <int> offsetKey = CArray <int> (3);  // to manage the offset orders
+            offsetKey(axis) = shiftBuffer(depth, axis);  // adding the initial shift
+
+            // going through i and j and continuing the search for each node
+            int newChildIndex;
+            for (int i = 0; i <= 1; i++) {
+                for (int j = 0; j <= 1; j++) {
+                    // constructing the index
+                    offsetKey(indexI) = i;
+                    offsetKey(indexJ) = j;
+
+                    // checking if the child node is empty (in which case this is a leaf node and it'll be added to the traversal cashe)
+                    newChildIndex = childPointReferences(childIndex, offsetOrderChildIndex(offsetKey(0), offsetKey(1), offsetKey(2)));
+                    if (newChildIndex == -1)
+                    {
+                        // getting the face node index and adding it to the traversal table buffer
+                        cellNeighborReferences(depthIndexBufferSearch(depth), cellNeighborBufferSize(depthIndexBufferSearch(depth))) = childPointReferences(
+                            childIndex,
+                            offsetOrderChildIndex(offsetKey(0), offsetKey(1), offsetKey(2))
+                        );
+                        cellNeighborBufferSize(depthIndexBufferSearch(depth))++;
+                    } else {  // continuing the search if the node wasn't a leaf
+                        // continuing the search
+                        GetChildFaceNodesRecursive(
+                            depth,
+                            newChildIndex,
+                            nodeRefferenceIndex, shiftBuffer, axis,
+                            indexI, indexJ
+                        );
+                    }
+                }
+            }
             
-            // finding the other 3 cells (1 from the larger cube above, 1 to the side, and 1 to the front)
-            // how do you back trace until it shifts in the correcct direction? Have a way to see shifts and just look at that?
-
-            // going back down the path and branching out to the neighbors
-
-            /*
-            go back down the tree, branch out based on the shift coordinate looking for a valid child until one is found and then...
-            decending while staying in line with the face and branching out to any children that fit width wise until at the bottom
-            add those leaf nodes to the final buffer
-
-            edge case:
-                
-                how do you handle the corners/walls of the bounding box for the entire octree?
-                - There wouldn't be any neighbors to one side
-            
-            */
-
-
             return;  // ending the function
         }
 
@@ -602,7 +638,7 @@ namespace Octree
         // gets the nearest neighbor but also gets the base leaf node
         public: double NearestNeighborSearch (double samplePositionX, double samplePositionY, double samplePositionZ)
         {
-            // getting the leaf node to begin the search
+            // getting the leaf node to begin the search (and get the path to back-trace efficently)
             int leafNodeIndex = GetLeafIndex(samplePositionX, samplePositionY, samplePositionZ);
 
             return NearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ);  // returning the distance
