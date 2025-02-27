@@ -1,8 +1,12 @@
 #include <iostream>
+#include <queue>
 #include "matar.h"
 
 // the maximum depth a binary search can go to
 const int MAX_BINARY_SEARCH_ITTERATIONS = 250;
+
+// the maximum depth the nearest neighbor algerithm can go by default
+const int DEFAULT_MAX_SEARCH_DEPTH = 9999;
 
 
 
@@ -52,7 +56,7 @@ namespace Octree
         CArray <int> numPositionIndexs;  // the number of positions in each given grid cell (esentially a stack)
 
         CArray <double> leafNodePositions;  // the global positions of the leaf nodes (different from the indexes)
-        CArray <int> leafNodeIndexes;
+        CArray <int> leafNodeDepths;
 
         int numberChildReferences;
         int numberOfLeafNodes;
@@ -109,7 +113,7 @@ namespace Octree
             numPositionIndexs = CArray <int> (max1DDepth);
             numPositionIndexs.set_values(0);  // making sure the default is 
             leafNodePositions = CArray <double> (max1DDepth, 3);
-            leafNodeIndexes = CArray <int> (max1DDepth);
+            leafNodeDepths = CArray <int> (max1DDepth);
 
             maxDepth = _maxDepth;
             points = _points;  // storing the address of the points inside the class
@@ -176,11 +180,10 @@ namespace Octree
             if (depth == maxDepth)
             {
                 // adding the position of the leaf node
-                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
-                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
-                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
-                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
-                numberOfLeafNodes++;
+                leafNodePositions(numberChildReferences, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberChildReferences, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberChildReferences, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeDepths(numberChildReferences) = depth;
 
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
@@ -236,11 +239,10 @@ namespace Octree
             if (!numberBoundingPoints)
             {
                 // adding the position of the leaf node
-                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
-                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
-                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
-                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
-                numberOfLeafNodes++;
+                leafNodePositions(numberChildReferences, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberChildReferences, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberChildReferences, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeDepths(numberChildReferences) = depth;
 
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
@@ -260,11 +262,10 @@ namespace Octree
             if (numberBoundingPoints == 1)
             {
                 // adding the position of the leaf node
-                leafNodePositions(numberOfLeafNodes, 0) = tilePositionX + tileSizeX * 0.5;
-                leafNodePositions(numberOfLeafNodes, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
-                leafNodePositions(numberOfLeafNodes, 2) = tilePositionZ + tileSizeZ * 0.5;
-                leafNodeIndexes(numberOfLeafNodes) = numberChildReferences;
-                numberOfLeafNodes++;
+                leafNodePositions(numberChildReferences, 0) = tilePositionX + tileSizeX * 0.5;
+                leafNodePositions(numberChildReferences, 1) = tilePositionY + tileSizeY * 0.5;  // the position of the center of the current cell
+                leafNodePositions(numberChildReferences, 2) = tilePositionZ + tileSizeZ * 0.5;
+                leafNodeDepths(numberChildReferences) = depth;
 
                 childPointReferences(numberChildReferences, 0) = -1;
                 childPointReferences(numberChildReferences, 1) = -1;
@@ -325,7 +326,7 @@ namespace Octree
             cellNeighborBufferSize.set_values(0);  // the intial buffer position is at 0 for all elements
 
             // finding all leaf nodes and then finding their neighbors
-            NodeReferenceCacheRecursiveAscent(1, rootNodeReferenceIndex, nodeRefferenceIndex);
+            NodeReferenceCacheRecursiveAscent(0, rootNodeReferenceIndex, nodeRefferenceIndex);
 
             return;  // ending the function
         }
@@ -440,7 +441,7 @@ namespace Octree
 
             // getting all nodes on the oposing faces of other parent nodes (not under the main parent node that harbors the first 3)
             FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 0);
-            FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 1);
+            FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 1);  // this isn't working for some reason. It's either not getting neighbors and/or putting -1's in (which don't belong anywhere in this)
             FindChildFace(depth, childIndex, nodeRefferenceIndex, shiftBuffer, 2);
 
             return;  // ending the function
@@ -510,11 +511,14 @@ namespace Octree
                     if (newChildIndex == -1)
                     {
                         // getting the face node index and adding it to the traversal table buffer
-                        cellNeighborReferences(depthIndexBufferSearch(depth), cellNeighborBufferSize(depthIndexBufferSearch(depth))) = childPointReferences(
+                        /*cellNeighborReferences(depthIndexBufferSearch(depth), cellNeighborBufferSize(depthIndexBufferSearch(depth))) = childPointReferences(
                             childIndex,
                             offsetOrderChildIndex(offsetKey(0), offsetKey(1), offsetKey(2))
-                        );
+                        );*/
+                        cellNeighborReferences(depthIndexBufferSearch(depth), cellNeighborBufferSize(depthIndexBufferSearch(depth))) = childIndex;
                         cellNeighborBufferSize(depthIndexBufferSearch(depth))++;
+
+                        return;  // this is the lowest cell in the tree for this face
                     } else {  // continuing the search if the node wasn't a leaf
                         // continuing the search
                         GetChildFaceNodesRecursive(
@@ -531,6 +535,7 @@ namespace Octree
         }
 
 
+        // multiple constructors so that you can manually enter parameters or have the code generate them (some algerithms may have them already found so re-creation isn't necessary)
         // grabs the leaf cell for a given position
         public: int GetLeafIndex (double posX_, double posY_, double posZ_)
         {
@@ -602,17 +607,175 @@ namespace Octree
         }
 
 
-        // gets the nearest neighbor but also gets the base leaf node
-        public: double NearestNeighborSearch (double samplePositionX, double samplePositionY, double samplePositionZ)
+        // stores the distance to a node (used in nns)
+        private: struct NodeDistance  // this struct is sourced from Chat-GPT-3 (no other code was sourced from external sources unless specified)     some aspects of the struct were modified or added to
+        {
+            int nodeIndex;
+            double squaredDistance;  // Avoid sqrt for efficiency
+
+            // creating a basic constructor for the parameters
+            NodeDistance() = default;
+            NodeDistance (int _nodeIndex, double _squaredDistance)
+            {
+                squaredDistance = _squaredDistance;
+                nodeIndex = _nodeIndex;
+            }
+
+            // Define comparison for min-heap (priority queue)
+            bool operator > (const NodeDistance &other) const {
+                return squaredDistance > other.squaredDistance;
+            }
+        };
+
+        // gets the squared distance from one point to another
+        private: double GetSquaredDistance (CArray <double> point1, CArray <double> point2)
+        {
+            double dx = point2(0) - point1(0);
+            double dy = point2(1) - point1(1);  // getting the difference
+            double dz = point2(2) - point1(2);
+
+            return dx*dx + dy*dy + dz*dz;  // returning the distance
+        }
+        
+        // gets the distance to the nearest neighbor using the neighbor chaching system created
+        public: double NearestNeighborSearch (const double samplePositionX, const double samplePositionY, const double samplePositionZ)
+        {
+            return NearestNeighborSearch(samplePositionX, samplePositionY, samplePositionZ, DEFAULT_MAX_SEARCH_DEPTH);
+        }
+
+        // gets the distance to the nearest neighbor using the neighbor chaching system created
+        public: double NearestNeighborSearch (const double samplePositionX, const double samplePositionY, const double samplePositionZ, const int maxSearchDepth)
         {
             // getting the leaf node to begin the search (and get the path to back-trace efficently)
             int leafNodeIndex = GetLeafIndex(samplePositionX, samplePositionY, samplePositionZ);
 
-            return NearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ);  // returning the distance
+            return NearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ, maxSearchDepth, true);  // returning the distance
+        }
+
+        // gets the distance to the nearest neighbor using the neighbor chaching system created
+        public: double NearestNeighborSearch (const int leafNodeIndex, const double samplePositionX, const double samplePositionY, const double samplePositionZ)
+        {
+            return NearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ, DEFAULT_MAX_SEARCH_DEPTH, true);
+        }
+
+        // gets the nearest neighbor (assuming the get leaf node call was made from an external source; still required to be the newest get leaf node call)
+        public: double NearestNeighborSearch (const int leafNodeIndex, const double samplePositionX, const double samplePositionY, const double samplePositionZ, const int maxSearchDepth, bool throwMaxDepthAssert)
+        {
+            // creating a min-heap priority queue to store nodes and their distances
+            std::priority_queue<NodeDistance, std::vector<NodeDistance>, std::greater<NodeDistance> > nodeQueue;
+
+            // the CArray version of the query point
+            CArray <double> queryPoint = CArray <double> (3);
+            queryPoint(0) = samplePositionX;
+            queryPoint(1) = samplePositionY;
+            queryPoint(2) = samplePositionZ;
+
+            // pushing the leaf node onto the queue
+            nodeQueue.push(
+                NodeDistance(leafNodeIndex, 0.0)
+            );
+
+            // stores the current node being investigated
+            NodeDistance currentNode;
+            double distance;  // stores the distance from the query point to the node being investigated
+            double depthScalar, nodeWidthX, nodeWidthY, nodeWidthZ, nodeWidth, minNodeDist;
+
+            // the minimum distance found
+            double minDist = std::numeric_limits<double>::max();
+
+            // stores all visted nodes so they aren't re-visited
+            CArray <bool> visited = CArray <bool> (numberChildReferences);
+
+            // starting the search
+            for (int i = 0; i < maxSearchDepth; i++)
+            {
+                std::cout << i << ", " << nodeQueue.size() << std::endl;
+                assert(!nodeQueue.empty() && "Error: Priority Queue is empty (Octree::Octree::NearestNeighborSearch)!\n    Make sure the octree has data stored and the traversal cache created");
+
+                // popping an item of the queue
+                currentNode = nodeQueue.top();
+                nodeQueue.pop();
+
+                // going until the closest distance is beyond the minimum node left
+                depthScalar = depthSizeScalars(leafNodeDepths(currentNode.nodeIndex));
+                nodeWidthX = sizeX * depthScalar;
+                nodeWidthY = sizeY * depthScalar;
+                nodeWidthZ = sizeZ * depthScalar;
+                nodeWidth = nodeWidthX*nodeWidthX + nodeWidthY*nodeWidthY + nodeWidthZ*nodeWidthZ;
+
+                // getting the minimum distance from the nodes nearest corner to the query point    simplifed -> (sqrt(squareDst) - 0.5 * sqrt(nodeWidth) > sqrt(minDist))
+                //minNodeDist = currentNode.squaredDistance + nodeWidth * 0.25 - sqrt(currentNode.squaredDistance * nodeWidth);
+                
+                std::cout << sqrt(minDist) << std::endl;
+                
+                std::cout << "Node: " << currentNode.nodeIndex
+                    << " | Node Width: " << sqrt(nodeWidth)
+                    << " | Query Dist from Center: " << sqrt(currentNode.squaredDistance)
+                    << " | True Min Dist from Bounds: " << sqrt(currentNode.squaredDistance) - sqrt(nodeWidth)
+                    << " | Node Depth: " << leafNodeDepths(currentNode.nodeIndex) << std::endl;
+                
+                if (sqrt(currentNode.squaredDistance) - sqrt(nodeWidth) >= sqrt(minDist)) return sqrt(minDist);
+                //if (minNodeDist >= minDist) return sqrt(minDist);
+                
+                visited(currentNode.nodeIndex) = true;
+
+                // checking if there are any points inside this node
+                if (numPositionIndexs(currentNode.nodeIndex))
+                {
+                    // itterating through all points and finding the closest point and then returning it
+                    for (int j = 0; j < numPositionIndexs(currentNode.nodeIndex); j++)
+                    {
+                        // getting the distance
+                        double dx = samplePositionX - points(positionIndexesPlusOne(currentNode.nodeIndex, j) - 1, 0);
+                        double dy = samplePositionY - points(positionIndexesPlusOne(currentNode.nodeIndex, j) - 1, 1);
+                        double dz = samplePositionZ - points(positionIndexesPlusOne(currentNode.nodeIndex, j) - 1, 2);
+                        distance = dx*dx + dy*dy + dz*dz;
+
+                        // finding if this distance is closer
+                        minDist = std::min(distance, minDist);
+                    }
+                }
+
+                // getting all neighboring nodes and adding them to the queue
+                for (int j = 0; j < cellNeighborBufferSize(currentNode.nodeIndex); j++)
+                {
+                    // checking if the node was already visited
+                    if (visited(cellNeighborReferences(currentNode.nodeIndex, j))) continue;
+                    
+                    // getting the distance to this node from the query point
+                    distance = GetSquaredDistance(
+                        GetLeafNodePosition(cellNeighborReferences(currentNode.nodeIndex, j)),  // passing in a bad index? how? The table must be bad
+                        queryPoint
+                    );
+
+                    std::cout << "Adding Neighbor: " << cellNeighborReferences(currentNode.nodeIndex, j)
+                              << " | Distance: " << sqrt(distance)
+                              << " | Depth: " << leafNodeDepths(cellNeighborReferences(currentNode.nodeIndex, j)) << std::endl;
+
+                    // adding the new node to the queue
+                    nodeQueue.push(
+                        NodeDistance(cellNeighborReferences(currentNode.nodeIndex, j), distance)
+                    );
+                }
+            }
+
+            // throwing an error if the search failed
+            assert(!throwMaxDepthAssert && "Error: Maximum depth reached in octree traversal (Octree::Octree::NearestNeighborSearch)!\n    Try increasing the max-depth argument");
+            return -1.0;  // the search failed
+        }
+
+
+        // gets the nearest neighbor but also gets the base leaf node
+        public: double ApproximateNearestNeighborSearch (double samplePositionX, double samplePositionY, double samplePositionZ)
+        {
+            // getting the leaf node to begin the search (and get the path to back-trace efficently)
+            int leafNodeIndex = GetLeafIndex(samplePositionX, samplePositionY, samplePositionZ);
+
+            return ApproximateNearestNeighborSearch(leafNodeIndex, samplePositionX, samplePositionY, samplePositionZ);  // returning the distance
         }
 
         // preforms a nearest neighbor search based on a given point
-        public: double NearestNeighborSearch (int leafNodeIndex, double samplePositionX, double samplePositionY, double samplePositionZ)
+        public: double ApproximateNearestNeighborSearch (int leafNodeIndex, double samplePositionX, double samplePositionY, double samplePositionZ)
         {
             double distance = std::numeric_limits<double>::max();  // the minimum distance found
             
@@ -670,30 +833,18 @@ namespace Octree
         }
 
 
-        // gets a leaf node
-        public: int GetLeafNodeFromLeafIndex (int leafIndex) {return leafNodeIndexes(leafIndex);}
-
-        // gets the number of leaf nodes
-        public: int GetNumberOfLeafNodes () {return numberOfLeafNodes;}
-
         // gets the position of a given node in global space (from a node index)
         public: CArray <double> GetLeafNodePosition (int leafNodeIndex)
         {
             CArray <double> outputPosition = CArray <double> (3);  // stores the final position that's calculated
 
-            // doing a reverse lookup to find the position  (based on the inherent method used to construct the indexes, they should be in assending order; thus a binary search is being used)
-            int leafIndex = BinarySearch <int> (leafNodeIndexes, numberOfLeafNodes, leafNodeIndex);
-
             // getting the position
-            outputPosition(0) = leafNodePositions(leafIndex, 0);
-            outputPosition(1) = leafNodePositions(leafIndex, 1);
-            outputPosition(2) = leafNodePositions(leafIndex, 2);
+            outputPosition(0) = leafNodePositions(leafNodeIndex, 0);  //leafIndex, 0);
+            outputPosition(1) = leafNodePositions(leafNodeIndex, 1);  //leafIndex, 1);
+            outputPosition(2) = leafNodePositions(leafNodeIndex, 2);  //leafIndex, 2);
 
             return outputPosition;  // returning the position
         }
-
-        // gets the leaf index from a general index
-        public: int GetLeafIndexFromIndex (int leafNodeIndex) {return BinarySearch <int> (leafNodeIndexes, numberOfLeafNodes, leafNodeIndex);}
 
         // returns the size of the octree
         public: int GetSize () {return numberChildReferences;}
