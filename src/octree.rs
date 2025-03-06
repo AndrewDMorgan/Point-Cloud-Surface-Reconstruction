@@ -1,3 +1,6 @@
+#![allow(non_snake_case)]
+
+use crate::priorityQueue;
 
 const MAX_BINARY_SEATCH_ITTERATIONS: isize = 250;
 const DEFAULT_MAX_SEARCH_DEPTH: isize = 9999;
@@ -9,15 +12,13 @@ pub fn BinarySearch (points: &Vec <usize>, searchValue: &usize) -> Option <usize
     let mut currentIndex: usize = 0;
     let mut dividedSize = points.len();
 
-    let mut halfWidth: usize; let mut currentIndexOld: usize;
+    let mut halfWidth: usize;
     // edit this?
     for i in 0..MAX_BINARY_SEATCH_ITTERATIONS {
         halfWidth = dividedSize / 2;
         dividedSize -= halfWidth;
 
         if let Some(middleValue) = points.get(currentIndex + halfWidth) {
-            currentIndexOld = currentIndex;
-
             if middleValue == searchValue {
                 return Some(currentIndex + halfWidth);
             }
@@ -508,12 +509,102 @@ impl Octree {
             // do i actually need to check if this position has any points?
             // wouldn't the previous if statement cover that?
 
-            self.depthIndexBufferSearch[i] = nodeIndex.unwrap();
+            self.depthIndexBufferSearch.push(nodeIndex.unwrap());
         }
 
-        self.depthIndexBufferSearch[self.lastLeafDepth] = nodeIndex.unwrap();
+        self.depthIndexBufferSearch.push(nodeIndex.unwrap());
 
         nodeIndex.unwrap()
+    }
+
+
+    fn GetSquaredDistance (&self, point1: (f64, f64, f64), point2: (f64, f64, f64)) -> f64 {
+        let deltaPos = (
+            point1.0 - point2.0,
+            point1.1 - point2.1,
+            point1.2 - point2.2,
+        );
+
+        deltaPos.0*deltaPos.0 + deltaPos.1*deltaPos.1 + deltaPos.2*deltaPos.2
+    }
+
+    pub fn NearestNeighborSearch (&self,
+                                  points: &Vec <(f64, f64, f64)>,
+                                  leafNodeIndex: usize,
+                                  samplePosition: (f64, f64, f64)
+            ) -> Option <f64> {
+        let mut queue = priorityQueue::MinHeapBinaryTree::new();
+
+        let queryPoint = (
+            samplePosition.0, samplePosition.1, samplePosition.2
+        );
+
+        queue.Push(
+            (0.0, leafNodeIndex)
+        );
+
+        let mut distance: f64;
+        let mut nodeWidth: f64;
+        let mut minNodeDst: f64;
+        let mut depthScalar: f64;
+        let mut currentNode: (f64, usize);
+        let mut nodeWidthXYZ: (f64, f64, f64);
+
+        let mut minDst = std::f64::MAX;
+
+        let mut visited: std::collections::HashMap <usize, bool> =
+            std::collections::HashMap::new();
+        visited.insert(leafNodeIndex, true);
+
+        while !queue.IsEmpty() {
+            // the queue has to not be empty to get here
+            currentNode = queue.Pop().unwrap();
+
+            depthScalar = self.depthSizeScalars[
+                self.leafNodeDepths[currentNode.1]
+                .expect("Not a leaf node")];
+            nodeWidthXYZ = (
+                self.sizeX * depthScalar,
+                self.sizeY * depthScalar,
+                self.sizeZ * depthScalar
+            );
+            nodeWidth = nodeWidthXYZ.0*nodeWidthXYZ.0 +
+                        nodeWidthXYZ.1*nodeWidthXYZ.1 +
+                        nodeWidthXYZ.2*nodeWidthXYZ.2;
+            
+            minNodeDst = currentNode.0 + nodeWidth * 0.25 -
+                         (currentNode.0 * nodeWidth).sqrt();
+            
+            if minNodeDst >= minDst {
+                return Some(minDst.sqrt())
+            }
+
+            visited.insert(currentNode.1, true);
+
+            for positionIndex in &self.positionIndexesPlusOne[currentNode.1] {
+                let point = points[*positionIndex];
+                distance = self.GetSquaredDistance(point, samplePosition);
+                minDst = minDst.min(distance);
+            }
+
+            for neighborIndex in &self.cellNeighborRefferences[currentNode.1] {
+                if visited.contains_key(neighborIndex) {
+                    continue;
+                }
+
+                distance = self.GetSquaredDistance(
+                    self.GetLeafPosition(*neighborIndex).
+                                expect("Failed to get leaf position"),
+                    queryPoint
+                );
+
+                queue.Push((
+                    distance, *neighborIndex
+                ));
+            }
+        }
+        
+        None
     }
 
 
