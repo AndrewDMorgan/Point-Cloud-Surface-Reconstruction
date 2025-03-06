@@ -1,13 +1,23 @@
 #![allow(non_snake_case)]
 
 
+enum FutureChildType {
+    NextLayer,
+    Incomplete,
+    None,
+}
+
+
 struct Node {
     leftChild: Option <usize>,
     rightChild: Option <usize>,
     parent: Option <usize>,
+    incompleteNodeLeft: Option <usize>,
+    incompleteNodeRight: Option <usize>,
+    typeOfFutureChildren: FutureChildType,
     depth: usize,
     // just swap this to reduce memory movement
-    value: f64,
+    value: (f64, usize),
 }
 
 
@@ -22,7 +32,7 @@ pub struct MinHeapBinaryTree {
     incompleteNodes: Vec <(Option <usize>, usize)>,
     nextLayer: Vec <(Option <usize>, usize)>,  // the next layer of nodes (so the depth can expand)
     numberOfNodes: usize,
-    
+
     // represents the deepest node
     // when a leaf node is inserted, if it's
     // shallower than this, push it to the start of the vector
@@ -43,80 +53,160 @@ impl MinHeapBinaryTree {
         }
     }
 
-    pub fn GetMin (&self) -> f64 {
+    pub fn GetMin (&self) -> (f64, usize) {
         return self.childReferences[0].value;
     }
 
-    pub fn Insert (&mut self, value: f64) {
+    pub fn Push (&mut self, value: (f64, usize)) {
         // gather the ne index for the node
         if let Some((parent, depth)) = self.incompleteNodes.pop() {
             // getting the node
-            let newNode = Node {
+            let mut newNode = Node {
                 leftChild: None,
                 rightChild: None,
                 parent: parent,
+                incompleteNodeLeft: Some(self.nextLayer.len()),
+                incompleteNodeRight: Some(self.nextLayer.len() + 1),
+                typeOfFutureChildren: FutureChildType::Incomplete,
                 depth: depth,
-                value: value
+                value: value,
             };
 
             // pushing the new future children
             if depth >= self.deepest {
                 self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
                 self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
+                newNode.typeOfFutureChildren = FutureChildType::NextLayer;
+                newNode.incompleteNodeLeft = Some(self.nextLayer.len() - 1);
+                newNode.incompleteNodeRight = Some(self.nextLayer.len() - 2);
             } else {
                 self.incompleteNodes.push((Some(self.numberOfNodes), depth + 1));
                 self.incompleteNodes.push((Some(self.numberOfNodes), depth + 1));
             }
             self.childReferences.push(newNode);
-            self.numberOfNodes += 1;  // two nodes were added
+            self.numberOfNodes += 1;  // one node was added
 
-            if !parent.is_none() {
-                let mut validParent = parent.unwrap();
-                if self.childReferences[validParent].leftChild.is_none() {
-                    self.childReferences[validParent].rightChild = Some(self.numberOfNodes);
+            if parent.is_none() { return; }
+            
+            let mut validParent = parent.unwrap();
+            self.childReferences[validParent].typeOfFutureChildren = FutureChildType::None;
+            if self.childReferences[validParent].leftChild.is_none() {
+                self.childReferences[validParent].leftChild = Some(self.numberOfNodes - 1);
+                self.childReferences[validParent].incompleteNodeLeft = None;
+            } else {
+                self.childReferences[validParent].rightChild = Some(self.numberOfNodes - 1);
+                self.childReferences[validParent].incompleteNodeRight = None;
+            }
+
+            // swapping until the value satisfies the min-heap rules
+            let mut parent: Option <usize>;
+
+            let mut currentValue: (f64, usize);
+            let mut currentIndex = self.numberOfNodes - 1;
+            loop {
+                currentValue = self.childReferences[currentIndex].value;
+                parent = self.childReferences[currentIndex].parent;
+                if parent.is_none() { return; }
+                validParent = parent.unwrap();
+
+                if value.0 < self.childReferences[validParent].value.0 && validParent != currentIndex {
+                    // swapping the values and continuing
+                    self.childReferences[currentIndex].value = self.childReferences[validParent].value;
+                    self.childReferences[validParent].value = currentValue;
+                    currentIndex = validParent;
                 } else {
-                    self.childReferences[validParent].leftChild = Some(self.numberOfNodes);
-                }
-
-                // swapping until the value satisfies the min-heap rules
-                let mut parent: Option <usize>;
-
-                let mut currentValue: f64;
-                let mut currentIndex = self.numberOfNodes - 1;
-                loop {
-                    currentValue = self.childReferences[currentIndex].value;
-                    parent = self.childReferences[currentIndex].parent;
-                    if parent.is_none() { return; }
-                    validParent = parent.unwrap();
-
-                    if value < self.childReferences[validParent].value && validParent != currentIndex {
-                        // swapping the values and continuing
-                        self.childReferences[currentIndex].value = self.childReferences[validParent].value;
-                        self.childReferences[validParent].value = currentValue;
-                        currentIndex = validParent;
-                    } else {
-
-                        /*for node in &self.childReferences {
-                            println!("    Node: {}    value: {}    depth: {}    parent: {}    left: {}    right: {}", self.numberOfNodes - 1, node.value, node.depth, node.parent.unwrap_or(0), node.leftChild.unwrap_or(0), node.rightChild.unwrap_or(0));
-                        }*/
-
-                        return;  // the min-heap rules are satisfied
-                    }
+                    return;  // the min-heap rules are satisfied
                 }
             }
         }
 
         // moving all nodes from the next depth to the incompelte buffer
-        while let Some(nodeIndex) = self.nextLayer.pop() {
-            self.incompleteNodes.push(nodeIndex);
+        while let Some(node) = self.nextLayer.pop() {
+            if let Some(index) = node.0 {
+                if self.childReferences[index].leftChild == node.0 {
+                    self.childReferences[index].incompleteNodeLeft = Some(self.incompleteNodes.len());
+                } else {
+                    self.childReferences[index].incompleteNodeRight = Some(self.incompleteNodes.len());
+                }
+                self.childReferences[index].typeOfFutureChildren = FutureChildType::Incomplete;
+            }
+            self.incompleteNodes.push(node);
         }
         self.deepest += 1;  // the next layer has been reached
         // calling insert to actually insert a value
-        self.Insert(value);
+        self.Push(value);
+    }
+    
+    pub fn Pop (&mut self) -> Option <(f64, usize)> {
+        // find a leaf node
+        // take that leaf node, pop it off,
+        // place that leaf node at the root replacing the current root
+        // swap the root node down until it satisifes the rules
+
+        // getting the leaf node, and then finding the next next leaf node
+        // does this work, or is this completely flawed??
+        let initialValue = Some(self.childReferences[0].value);
+        if let Some(node) = self.childReferences.pop() {
+            self.numberOfNodes -= 1;
+            // updating the node's parent to not reference it and removing any
+            // potential new positions from the vector of them
+            if let Some(parent) = node.parent {
+                if self.childReferences[parent].leftChild == Some(self.childReferences.len()) {
+                    self.childReferences[parent].leftChild = None;
+                    self.childReferences[parent].incompleteNodeLeft = Some(self.incompleteNodes.len());
+                } else {
+                    self.childReferences[parent].rightChild = None;
+                    self.childReferences[parent].incompleteNodeRight = Some(self.incompleteNodes.len());
+                }
+                self.incompleteNodes.push((Some(0), node.depth));
+            } else {
+                // removing the root node
+                self.childReferences.clear();
+                self.incompleteNodes = vec![(None, 0)];
+                return initialValue;
+            }
+
+            self.childReferences[0].value = node.value;
+
+            // shifting the value down until the rules are satisfied
+            let mut currentValue: (f64, usize);
+            let mut currentNode = 0;
+            loop {
+                if let Some(child) = self.childReferences[currentNode].leftChild {
+                    if self.childReferences[currentNode].value.0 > self.childReferences[child].value.0 {
+                        currentValue = self.childReferences[currentNode].value;
+                        self.childReferences[currentNode].value = self.childReferences[child].value;
+                        self.childReferences[child].value = currentValue;
+                        currentNode = child;
+                    } else {
+                        if let Some(child) = self.childReferences[currentNode].rightChild {
+                            if self.childReferences[currentNode].value.0 > self.childReferences[child].value.0 {
+                                currentValue = self.childReferences[currentNode].value;
+                                self.childReferences[currentNode].value = self.childReferences[child].value;
+                                self.childReferences[child].value = currentValue;
+                                currentNode = child;
+                            } else {
+                                return initialValue;
+                            }
+                        } else {
+                            return initialValue;
+                        }
+                    }
+                } else {
+                    // this is a leaf node
+                    return initialValue;
+                }
+            }
+        } 
+
+        None  // no valid nodes to be retreaved
     }
 
-    pub fn Pop (&mut self) -> f64 {
-        0.0
+    pub fn Print (&self) {
+        for node in &self.childReferences {
+            println!("    Node: {}    value: {}    depth: {}    parent: {}    left: {}    right: {}", self.numberOfNodes - 1, node.value.0, node.depth, node.parent.unwrap_or(0), node.leftChild.unwrap_or(0), node.rightChild.unwrap_or(0));
+        }
     }
+
 }
 
