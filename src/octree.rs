@@ -1,11 +1,13 @@
 #![allow(non_snake_case)]
 
+// some of the methods aren't being used,
+// but are implimented as they may be usefull
+// in future projects
+#![allow(dead_code)]
+
 use crate::priorityQueue;
 
 const MAX_BINARY_SEATCH_ITTERATIONS: isize = 250;
-const DEFAULT_MAX_SEARCH_DEPTH: isize = 9999;
-
-// make sure the traversal caching isn't broken from not having a - 1 on the poitionIndexesPlusOne
 
 
 pub fn BinarySearch (points: &Vec <usize>, searchValue: &usize) -> Option <usize> {
@@ -14,7 +16,7 @@ pub fn BinarySearch (points: &Vec <usize>, searchValue: &usize) -> Option <usize
 
     let mut halfWidth: usize;
     // edit this?
-    for i in 0..MAX_BINARY_SEATCH_ITTERATIONS {
+    for _i in 0..MAX_BINARY_SEATCH_ITTERATIONS {
         halfWidth = dividedSize / 2;
         dividedSize -= halfWidth;
 
@@ -77,6 +79,7 @@ pub struct Octree {
     depthIndexBufferSearch: Vec <usize>,
     lastLeafDepth: usize,
     cellNeighborRefferences: Vec <Vec <usize>>,
+    leafNodes: Vec <usize>,
 }
 
 
@@ -110,8 +113,10 @@ impl Octree {
             depthIndexBufferSearch: vec!(),
             lastLeafDepth: 0,
             cellNeighborRefferences: vec!(),
+            leafNodes: vec!(),
         }
     }
+
 
     pub fn SubDivide (&mut self, points: &Vec <(f64, f64, f64)>) {
         self.numberOfLeafNodes = 0;
@@ -123,6 +128,7 @@ impl Octree {
             1
         );
 
+        // I'll leave this for now
         println!("Num cells: {}      root node: {}", self.childPointReferences.len(), self.rootNodeReferenceIndex);
     }
 
@@ -145,6 +151,7 @@ impl Octree {
         );
 
         if depth == self.maxDepth {
+            self.leafNodes.push(self.childPointReferences.len());
             self.leafNodePositions.push(Some((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
@@ -184,6 +191,7 @@ impl Octree {
         }
 
         if numberBoundingPoints == 0 {
+            self.leafNodes.push(self.childPointReferences.len());
             self.leafNodePositions.push(Some((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
@@ -199,6 +207,7 @@ impl Octree {
         }
 
         if numberBoundingPoints == 1 {
+            self.leafNodes.push(self.childPointReferences.len());
             self.leafNodePositions.push(Some((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
@@ -324,7 +333,7 @@ impl Octree {
 
         self.GetChildFaceNodesRecursive(
             depth,
-            self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][
+            self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][  // index error... :(
                     *CHILD_OFFSET_ORDER_INDEX.get(
                         &[1 - childOffset[0], childOffset[1], childOffset[2]]
                     ).expect("Invalid offset")
@@ -332,7 +341,7 @@ impl Octree {
             1 - childOffset[0],
             0,
             1,
-            2, 0
+            2
         );
         self.GetChildFaceNodesRecursive(
             depth,
@@ -344,7 +353,7 @@ impl Octree {
             1 - childOffset[1],
             1,
             0,
-            2, 0
+            2
         );
         self.GetChildFaceNodesRecursive(
             depth,
@@ -356,19 +365,18 @@ impl Octree {
             1 - childOffset[2],
             2,
             0,
-            1, 0
+            1
         );
 
         self.FindChildFace(depth, &shiftBuffer, 0);
         self.FindChildFace(depth, &shiftBuffer, 1);
         self.FindChildFace(depth, &shiftBuffer, 2);
-
     }
 
     fn FindChildFace (&mut self, depth: usize, shiftBuffer: &Vec <[usize; 3]>, axis: usize) {
         let lookingForShift = 1 - shiftBuffer[depth][axis];
 
-        for i in depth-1..=0 {
+        for i in (0..depth).rev() {
             if shiftBuffer[i][axis] == lookingForShift {
                 let offsetIndex: usize;
                 let indexI: usize;
@@ -406,7 +414,6 @@ impl Octree {
                     axis,
                     indexI,
                     indexJ,
-                    0
                 );
                 
                 return;
@@ -417,7 +424,7 @@ impl Octree {
     fn GetChildFaceNodesRecursive (
         &mut self, depth: usize, childIndex: usize,
         shift: usize, axis: usize,
-        indexI: usize, indexJ: usize, rec: usize) {
+        indexI: usize, indexJ: usize) {
 
         let mut offsetKey = [0usize, 0usize, 0usize];
         offsetKey[axis] = shift;
@@ -444,7 +451,7 @@ impl Octree {
                     shift,
                     axis,
                     indexI,
-                    indexJ, rec + 1
+                    indexJ
                 );
             }
         }
@@ -533,6 +540,7 @@ impl Octree {
                                   leafNodeIndex: usize,
                                   samplePosition: (f64, f64, f64)
             ) -> Option <f64> {
+        
         let mut queue = priorityQueue::MinHeapBinaryTree::new();
 
         let queryPoint = (
@@ -550,7 +558,7 @@ impl Octree {
         let mut currentNode: (f64, usize);
         let mut nodeWidthXYZ: (f64, f64, f64);
 
-        let mut minDst = std::f64::MAX;
+        let mut minDst = f64::MAX;
 
         let mut visited: std::collections::HashMap <usize, bool> =
             std::collections::HashMap::new();
@@ -603,12 +611,17 @@ impl Octree {
                 ));
             }
         }
-        
-        None
+
+        Some(minDst.sqrt())
+        //None    ig it can actually end up searching every node.....
     }
 
 
-    fn GetLeafPosition (&self, nodeIndex: usize) -> Option <(f64, f64, f64)> {
+    pub fn GetLeafNodes (&self) -> Vec <usize> {
+        self.leafNodes.clone()
+    }
+
+    pub fn GetLeafPosition (&self, nodeIndex: usize) -> Option <(f64, f64, f64)> {
         if let Some(node) = self.leafNodePositions.get(nodeIndex) {
             if node.is_none() { return None; }
             return *node;

@@ -1,5 +1,10 @@
 #![allow(non_snake_case)]
 
+// some of the methods aren't being used,
+// but are implimented as they may be usefull
+// in future projects
+#![allow(dead_code)]
+
 
 enum FutureChildType {
     NextLayer,
@@ -53,10 +58,6 @@ impl MinHeapBinaryTree {
         }
     }
 
-    pub fn GetMin (&self) -> (f64, usize) {
-        return self.childReferences[0].value;
-    }
-
     pub fn Push (&mut self, value: (f64, usize)) {
         // gather the ne index for the node
         if let Some((parent, depth)) = self.incompleteNodes.pop() {
@@ -64,12 +65,12 @@ impl MinHeapBinaryTree {
             let mut newNode = Node {
                 leftChild: None,
                 rightChild: None,
-                parent: parent,
+                parent,
                 incompleteNodeLeft: Some(self.nextLayer.len()),
                 incompleteNodeRight: Some(self.nextLayer.len() + 1),
                 typeOfFutureChildren: FutureChildType::Incomplete,
-                depth: depth,
-                value: value,
+                depth,
+                value,
             };
 
             // pushing the new future children
@@ -88,6 +89,7 @@ impl MinHeapBinaryTree {
 
             if parent.is_none() { return; }
             
+            // updating the children and incomplete nodes
             let mut validParent = parent.unwrap();
             self.childReferences[validParent].typeOfFutureChildren = FutureChildType::None;
             if self.childReferences[validParent].leftChild.is_none() {
@@ -136,7 +138,7 @@ impl MinHeapBinaryTree {
         // calling insert to actually insert a value
         self.Push(value);
     }
-    
+
     pub fn Pop (&mut self) -> Option <(f64, usize)> {
         // find a leaf node
         // take that leaf node, pop it off,
@@ -178,19 +180,17 @@ impl MinHeapBinaryTree {
                         self.childReferences[currentNode].value = self.childReferences[child].value;
                         self.childReferences[child].value = currentValue;
                         currentNode = child;
-                    } else {
-                        if let Some(child) = self.childReferences[currentNode].rightChild {
-                            if self.childReferences[currentNode].value.0 > self.childReferences[child].value.0 {
-                                currentValue = self.childReferences[currentNode].value;
-                                self.childReferences[currentNode].value = self.childReferences[child].value;
-                                self.childReferences[child].value = currentValue;
-                                currentNode = child;
-                            } else {
-                                return initialValue;
-                            }
+                    } else if let Some(child) = self.childReferences[currentNode].rightChild {
+                        if self.childReferences[currentNode].value.0 > self.childReferences[child].value.0 {
+                            currentValue = self.childReferences[currentNode].value;
+                            self.childReferences[currentNode].value = self.childReferences[child].value;
+                            self.childReferences[child].value = currentValue;
+                            currentNode = child;
                         } else {
                             return initialValue;
                         }
+                    } else {
+                        return initialValue;
                     }
                 } else {
                     // this is a leaf node
@@ -202,11 +202,21 @@ impl MinHeapBinaryTree {
         None  // no valid nodes to be retreaved
     }
 
+
+    pub fn IsEmpty (&self) -> bool {
+        self.numberOfNodes == 0
+    }
+
     pub fn Print (&self) {
         for node in &self.childReferences {
             println!("    Node: {}    value: {}    depth: {}    parent: {}    left: {}    right: {}", self.numberOfNodes - 1, node.value.0, node.depth, node.parent.unwrap_or(0), node.leftChild.unwrap_or(0), node.rightChild.unwrap_or(0));
         }
     }
 
+    pub fn GetMin (&self) -> (f64, usize) {
+        self.childReferences[0].value
+    }
+
 }
+
 
