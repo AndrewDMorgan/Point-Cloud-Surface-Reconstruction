@@ -1,3 +1,9 @@
+/*
+Improve the octree subdivision system to be smarter about searching for intersections with boxes
+Start using the node corners for the array in distance field calculations
+Impliment dual contouring or something like it for water tight iso contour extraction
+*/
+
 // snake case is just bad
 #![allow(non_snake_case)]
 
@@ -302,6 +308,9 @@ fn main() {
             );
             octree.SubDivide(&pointCloud);
             octree.GenerateNodeReferenceChache();
+            let numCorners = octree.GenerateCornerPointsChache();
+            println!("Number of corners: {}", numCorners);
+
             // 0, 0, 0 should be 52.6968; this error is in the algerithms--the c++ code does the same
             let inputPos = (7.970978545547169, 31.27784731879688, 7.970978545547169);
             let leafNodeIndex = octree.GetLeafIndex(inputPos);
@@ -312,7 +321,7 @@ fn main() {
                 println!("dst: {}", dst.expect("Failed to get distance"));
             }
 
-            let mut octreeNeighborDistance: Vec <f64> = vec!();
+            //let mut octreeNeighborDistance: Vec <f64> = vec!();
             
             /*for node in octree.GetLeafNodes() {
                 let position = octree.GetLeafPosition(node).
@@ -385,6 +394,7 @@ fn main() {
                 }
             }
 
+            println!("Ready for new one: {}", surfacePoints.len());
             let mut octree = octree::Octree::new(
                 (setupParameters.SampleSpaceOffset[0], setupParameters.SampleSpaceOffset[1], setupParameters.SampleSpaceOffset[2]),
                 (setupParameters.SampleSpaceBounds[0], setupParameters.SampleSpaceBounds[1], setupParameters.SampleSpaceBounds[2]),
@@ -392,6 +402,8 @@ fn main() {
             );
             octree.SubDivide(&surfacePoints);
             octree.GenerateNodeReferenceChache();
+            let numCorners = octree.GenerateCornerPointsChache();
+            println!("Number of corners: {}", numCorners);
 
             let oldIsoContourLevel = setupParameters.IsoContourLevel;
             if AUTO_SET && !LOADING_DISTANCE_FIELD_SAVE {

@@ -80,6 +80,14 @@ pub struct Octree {
     lastLeafDepth: usize,
     cellNeighborRefferences: Vec <Vec <usize>>,
     leafNodes: Vec <usize>,
+
+    // corner references...    using morton codes floor((pos - minTreeBoundingPos) / smallestCellSize)
+    cornerPoints: std::collections::HashMap <u128, (f64, f64, f64)>,
+    
+    // the indexes in the corner points hash-map
+    // a hash-map is needed to allow for checking
+    // for duplicate points
+    nodeCornerReferences: Vec <Vec <u128>>,
 }
 
 
@@ -103,7 +111,7 @@ impl Octree {
             maxDepth: maximumDepth,
             depthSizeScalars: {
                 let mut depthScalars: Vec <f64> = vec!();
-                for depth in 0..maximumDepth {
+                for depth in 0..=maximumDepth {
                     depthScalars.push(
                         1.0 / 2.0f64.powf(depth as f64)
                     );
@@ -114,7 +122,70 @@ impl Octree {
             lastLeafDepth: 0,
             cellNeighborRefferences: vec!(),
             leafNodes: vec!(),
+            cornerPoints: std::collections::HashMap::new(),
+            nodeCornerReferences: vec!(),  // one for every cell (representing it's 8 corners)
         }
+    }
+
+
+    pub fn GetCornerMortonCode (&self, posX: f64, posY: f64, posZ: f64) -> u128 {
+        // getting the intager position for the morton code
+        // floor((pos - minTreeBoundingPos) / smallestCellSize)
+        let x = ((posX - self.offsetX) / self.depthSizeScalars[self.maxDepth]) as u32;
+        let y = ((posY - self.offsetY) / self.depthSizeScalars[self.maxDepth]) as u32;
+        let z = ((posZ - self.offsetZ) / self.depthSizeScalars[self.maxDepth]) as u32;
+
+        // getting the morton code
+        let mut mortonCode: u128 = 0;
+        for i in 0..32 {  // 64-bit integer
+            mortonCode |= (((x >> i) & 1) as u128) << (3 * i);
+            mortonCode |= (((y >> i) & 1) as u128) << (3 * i + 1);
+            mortonCode |= (((z >> i) & 1) as u128) << (3 * i + 2);
+        } mortonCode
+    }
+
+    pub fn GenerateCornerPointsChache (&mut self) -> usize{
+        let mut totalCornerPoints = 0usize;
+
+        let mut mortonCode: u128;
+        let mut depthScalar: f64;
+        let mut cellSize: (f64, f64, f64);
+        let mut position: (f64, f64, f64);
+        let mut cornerOffset: (usize, usize, usize);
+        // going through every leaf node
+        // leaf index is being used; use a binary search to go
+        // from a node index back to leaf index (not needed inside here)
+        for (leafIndex, nodeIndex) in self.leafNodes.iter().enumerate() {
+            position = self.GetLeafPosition(*nodeIndex).
+                    expect("Failed to get leaf node position...");
+            depthScalar = self.depthSizeScalars[
+                self.leafNodeDepths[*nodeIndex].
+                    expect("Failed to get node depth...")
+            ];
+            cellSize = (
+                self.sizeX * depthScalar,
+                self.sizeY * depthScalar,
+                self.sizeZ * depthScalar,
+            );
+
+            self.nodeCornerReferences.push(vec!());
+            
+            // getting the 8 corners
+            for i in 0..8 {
+                cornerOffset = CHILD_OFFSET_ORDER[i];
+
+                // getting the morton code
+                mortonCode = self.GetCornerMortonCode(
+                    position.0 + cellSize.0 * cornerOffset.0 as f64,
+                    position.1 + cellSize.1 * cornerOffset.1 as f64,
+                    position.2 + cellSize.2 * cornerOffset.2 as f64,
+                );
+                if self.cornerPoints.insert(mortonCode, position).is_none() {
+                    totalCornerPoints += 1;
+                }
+                self.nodeCornerReferences[leafIndex].push(mortonCode);
+            }
+        } totalCornerPoints
     }
 
 
@@ -241,7 +312,7 @@ impl Octree {
         self.leafNodePositions.push(None);
         self.cellNeighborRefferences.push(vec!());
 
-        self.childPointReferences.len() - 1  // (temporary, remove later) so the compiler stops complaining while I'm writing the function
+        self.childPointReferences.len() - 1
     }
 
     
@@ -333,7 +404,7 @@ impl Octree {
 
         self.GetChildFaceNodesRecursive(
             depth,
-            self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][  // index error... :(
+            self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][
                     *CHILD_OFFSET_ORDER_INDEX.get(
                         &[1 - childOffset[0], childOffset[1], childOffset[2]]
                     ).expect("Invalid offset")
