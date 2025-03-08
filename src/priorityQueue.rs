@@ -121,7 +121,7 @@ impl MinHeapBinaryTree {
                 }
             }
         }
-
+        
         // moving all nodes from the next depth to the incompelte buffer
         while let Some(node) = self.nextLayer.pop() {
             if let Some(index) = node.0 {

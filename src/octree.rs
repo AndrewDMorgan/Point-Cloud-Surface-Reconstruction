@@ -63,7 +63,7 @@ lazy_static::lazy_static! {
 
 pub struct Octree {
     childPointReferences: Vec <[Option <usize>; 8]>,
-    positionIndexesPlusOne: Vec <Vec <usize>>,
+    positionIndexes: Vec <Vec <usize>>,
     leafNodePositions: Vec <Option <(f64, f64, f64)>>,
     leafNodeDepths: Vec <Option <usize>>,
     numberOfLeafNodes: usize,
@@ -97,7 +97,7 @@ impl Octree {
                 maximumDepth: usize) -> Self {
         Octree {
             childPointReferences: vec!(),
-            positionIndexesPlusOne: vec!(),
+            positionIndexes: vec!(),
             leafNodePositions: vec!(),
             leafNodeDepths: vec!(),
             numberOfLeafNodes: 0,
@@ -196,7 +196,7 @@ impl Octree {
             points,
             (0, 0, 0),
             (self.offsetX, self.offsetY, self.offsetZ),
-            1
+            0 // starting at 0 doesn't change anything it seems?
         );
 
         // I'll leave this for now
@@ -209,7 +209,7 @@ impl Octree {
                             position: (f64, f64, f64),
                             depth: usize) -> usize {
         
-        let scaledDepth = self.depthSizeScalars[depth - 1];
+        let scaledDepth = self.depthSizeScalars[depth];
         let nodeSize: (f64, f64, f64) = (
             self.sizeX * scaledDepth,
             self.sizeY * scaledDepth,
@@ -231,14 +231,14 @@ impl Octree {
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
-            self.positionIndexesPlusOne.push(vec!());
+            self.positionIndexes.push(vec!());
             for (i, point) in points.iter().enumerate() {
                 if  point.0 >= newPosition.0 && point.0 < newPosition.0 + nodeSize.0 &&
                     point.1 >= newPosition.1 && point.1 < newPosition.1 + nodeSize.1 &&
                     point.2 >= newPosition.2 && point.2 < newPosition.2 + nodeSize.2 {
 
-                    if let Some(buffer) = self.positionIndexesPlusOne.last_mut() {
-                        buffer.push(i + 1);
+                    if let Some(buffer) = self.positionIndexes.last_mut() {
+                        buffer.push(i);
                     }
                 }
             }
@@ -271,7 +271,7 @@ impl Octree {
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
-            self.positionIndexesPlusOne.push(vec!());
+            self.positionIndexes.push(vec!());
             self.cellNeighborRefferences.push(vec!());
 
             return self.childPointReferences.len() - 1;
@@ -287,7 +287,7 @@ impl Octree {
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
-            self.positionIndexesPlusOne.push(vec![
+            self.positionIndexes.push(vec![
                 lastIndex.expect("Failed to find point")
             ]);
             self.cellNeighborRefferences.push(vec!());
@@ -307,7 +307,7 @@ impl Octree {
         ];
 
         self.childPointReferences.push(newChildIndexes);
-        self.positionIndexesPlusOne.push(vec!());
+        self.positionIndexes.push(vec!());
         self.leafNodeDepths.push(None);
         self.leafNodePositions.push(None);
         self.cellNeighborRefferences.push(vec!());
@@ -366,9 +366,9 @@ impl Octree {
         for i in 1..depth {
             widthScalar = self.depthSizeScalars[i];
             cellSize = (
-                self.sizeX * widthScalar,
-                self.sizeY * widthScalar,
-                self.sizeZ * widthScalar,
+                self.sizeX * widthScalar - 0.00001,
+                self.sizeY * widthScalar - 0.00001,
+                self.sizeZ * widthScalar - 0.00001,
             );
 
             childOffset = [
@@ -396,9 +396,9 @@ impl Octree {
         self.depthIndexBufferSearch.push(childIndex);
 
         childOffset = [
-            ((searchPosition.0 - base.0) / nodeSize.0) as usize,
-            ((searchPosition.1 - base.1) / nodeSize.1) as usize,
-            ((searchPosition.2 - base.2) / nodeSize.2) as usize,
+            ((searchPosition.0 - base.0) / nodeSize.0 - 0.00001) as usize,
+            ((searchPosition.1 - base.1) / nodeSize.1 - 0.00001) as usize,
+            ((searchPosition.2 - base.2) / nodeSize.2 - 0.00001) as usize,
         ];
         shiftBuffer.push(childOffset);
 
@@ -529,11 +529,12 @@ impl Octree {
     }
 
 
-    pub fn GetLeafIndex (&mut self, inputPos: (f64, f64, f64)) -> usize {
+    pub fn GetLeafIndex (&mut self, inputPos: &(f64, f64, f64)) -> usize {
         let pos = (
-            inputPos.0.max(self.offsetX).min(self.sizeX + self.offsetX),
-            inputPos.1.max(self.offsetY).min(self.sizeY + self.offsetY),
-            inputPos.2.max(self.offsetZ).min(self.sizeZ + self.offsetZ),
+            // magic number is for percision to prevent errors at the far extremes
+            inputPos.0.max(self.offsetX).min(self.sizeX + self.offsetX - 0.00001),
+            inputPos.1.max(self.offsetY).min(self.sizeY + self.offsetY - 0.00001),
+            inputPos.2.max(self.offsetZ).min(self.sizeZ + self.offsetZ - 0.00001),
         );
 
         let mut nodeIndex = Some(self.rootNodeReferenceIndex);
@@ -552,7 +553,7 @@ impl Octree {
         self.depthIndexBufferSearch.clear();
         self.depthIndexBufferSearch.push(nodeIndex.unwrap());
 
-        for i in 1..self.maxDepth {
+        for i in 1..=self.maxDepth {
             self.lastLeafDepth = i;
 
             widthScalar = self.depthSizeScalars[i];
@@ -571,21 +572,18 @@ impl Octree {
             childIndex = *CHILD_OFFSET_ORDER_INDEX.get(&[childOffset.0, childOffset.1, childOffset.2]).
                 expect("Invalid offset");
             
-            lastNodeIndex = nodeIndex;
-            nodeIndex = self.childPointReferences[nodeIndex.unwrap()][childIndex];
-            if nodeIndex.is_none() {
-                nodeIndex = lastNodeIndex;
-                break;
-            }
-
             base = (
                 base.0 + nodeSize.0 * childOffset.0 as f64,
                 base.1 + nodeSize.1 * childOffset.1 as f64,
                 base.2 + nodeSize.2 * childOffset.2 as f64,
             );
 
-            // do i actually need to check if this position has any points?
-            // wouldn't the previous if statement cover that?
+            lastNodeIndex = nodeIndex;
+            nodeIndex = self.childPointReferences[nodeIndex.unwrap()][childIndex];
+            if nodeIndex.is_none() {
+                nodeIndex = lastNodeIndex;
+                break;
+            }
 
             self.depthIndexBufferSearch.push(nodeIndex.unwrap());
         }
@@ -660,7 +658,7 @@ impl Octree {
 
             visited.insert(currentNode.1, true);
 
-            for positionIndex in &self.positionIndexesPlusOne[currentNode.1] {
+            for positionIndex in &self.positionIndexes[currentNode.1] {
                 let point = points[*positionIndex];
                 distance = self.GetSquaredDistance(point, samplePosition);
                 minDst = minDst.min(distance);

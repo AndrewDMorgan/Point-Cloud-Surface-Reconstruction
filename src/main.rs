@@ -1,7 +1,15 @@
 /*
+Fix sign calculation :(
+
 Improve the octree subdivision system to be smarter about searching for intersections with boxes
 Start using the node corners for the array in distance field calculations
 Impliment dual contouring or something like it for water tight iso contour extraction
+
+
+
+leaf node getting is good
+the queue seemed to check out earlier, and it doesn't line up well with the type of error being random chunks at random specific areas
+
 */
 
 // snake case is just bad
@@ -14,7 +22,7 @@ mod priorityQueue;
 mod octree;
 
 const LOADING_DISTANCE_FIELD_SAVE: bool = false;
-const GENERATE_NEW_VERSION_SDF: bool = true;
+const GENERATE_NEW_VERSION_SDF: bool = false;//true;
 const USING_OLD_SDF: bool = true;
 
 // commented out any items that have no implimentation or
@@ -206,9 +214,9 @@ pub struct SetupParameters {
 fn main() {
 
     let mut setupParameters = SetupParameters {
-        SampleSpaceBounds: [101.0, 101.0, 101.0],
+        SampleSpaceBounds: [0.0, 0.0, 0.0],
         SampleSpaceOffset: [0.0, 0.0, 0.0],
-        IsoContourLevel: 6.0,
+        IsoContourLevel: 4.75,
         InverseDeltaX: 1.0 / (1.0),
         InverseDeltaY: 1.0 / (1.0),
         InverseDeltaZ: 1.0 / (1.0),
@@ -264,30 +272,34 @@ fn main() {
                 let mut cloudSizeY = largestY - lowestY;
                 let mut cloudSizeZ = largestZ - lowestZ;
 
-                setupParameters.InverseDeltaX = cloudSizeX / setupParameters.SampleSpaceBounds[0];
-                setupParameters.InverseDeltaY = cloudSizeY / setupParameters.SampleSpaceBounds[1];
-                setupParameters.InverseDeltaZ = cloudSizeZ / setupParameters.SampleSpaceBounds[2];
+                setupParameters.InverseDeltaX = cloudSizeX / GRID_SIZE.0 as f64;
+                setupParameters.InverseDeltaY = cloudSizeY / GRID_SIZE.1 as f64;
+                setupParameters.InverseDeltaZ = cloudSizeZ / GRID_SIZE.2 as f64;
 
-                setupParameters.IsoContourLevel *= (
+                let newIsoContourLevel = setupParameters.IsoContourLevel * (
                     setupParameters.InverseDeltaX + setupParameters.InverseDeltaY + setupParameters.InverseDeltaZ
                 ) / 3.0;
 
-                cloudSizeX += setupParameters.IsoContourLevel * 4.0;
-                cloudSizeY += setupParameters.IsoContourLevel * 4.0;
-                cloudSizeZ += setupParameters.IsoContourLevel * 4.0;
+                cloudSizeX += newIsoContourLevel * 4.0;
+                cloudSizeY += newIsoContourLevel * 4.0;
+                cloudSizeZ += newIsoContourLevel * 4.0;
 
                 setupParameters.SampleSpaceOffset = [
-                    lowestX - setupParameters.IsoContourLevel * 2.0,
-                    lowestY - setupParameters.IsoContourLevel * 2.0,
-                    lowestZ - setupParameters.IsoContourLevel * 2.0,
+                    lowestX - newIsoContourLevel * 2.0,
+                    lowestY - newIsoContourLevel * 2.0,
+                    lowestZ - newIsoContourLevel * 2.0,
                 ];
+
+                setupParameters.InverseDeltaX = cloudSizeX / GRID_SIZE.0 as f64;
+                setupParameters.InverseDeltaY = cloudSizeY / GRID_SIZE.1 as f64;
+                setupParameters.InverseDeltaZ = cloudSizeZ / GRID_SIZE.2 as f64;
 
                 let dAvg = (setupParameters.InverseDeltaX + setupParameters.InverseDeltaY + setupParameters.InverseDeltaZ) / 3.0;
                 setupParameters.IsoContourLevel *= dAvg;
 
-                setupParameters.InverseDeltaX = 1.0 / (cloudSizeX / setupParameters.SampleSpaceBounds[0]);
-                setupParameters.InverseDeltaY = 1.0 / (cloudSizeY / setupParameters.SampleSpaceBounds[1]);
-                setupParameters.InverseDeltaZ = 1.0 / (cloudSizeZ / setupParameters.SampleSpaceBounds[2]);
+                setupParameters.InverseDeltaX = 1.0 / setupParameters.InverseDeltaX;
+                setupParameters.InverseDeltaY = 1.0 / setupParameters.InverseDeltaY;
+                setupParameters.InverseDeltaZ = 1.0 / setupParameters.InverseDeltaZ;
 
                 setupParameters.SampleSpaceBounds = [
                     cloudSizeX, cloudSizeY, cloudSizeZ
@@ -313,17 +325,22 @@ fn main() {
 
             // 0, 0, 0 should be 52.6968; this error is in the algerithms--the c++ code does the same
             let inputPos = (7.970978545547169, 31.27784731879688, 7.970978545547169);
-            let leafNodeIndex = octree.GetLeafIndex(inputPos);
-            for _i in 0..1 {
+            let leafNodeIndex = octree.GetLeafIndex(&inputPos);
+            let dst = octree.NearestNeighborSearch(
+                &pointCloud, leafNodeIndex, inputPos
+            );
+            println!("dst: {}", dst.expect("Failed to get distance"));
+            
+            /*for _i in 0..1 {
                 let dst = octree.NearestNeighborSearch(
                     &pointCloud, leafNodeIndex, inputPos
                 );
                 println!("dst: {}", dst.expect("Failed to get distance"));
-            }
+            }*/
 
-            //let mut octreeNeighborDistance: Vec <f64> = vec!();
+            //let mut octreeNeighborDistance: Vec <f64> = vec!();     would need editing....
             
-            /*for node in octree.GetLeafNodes() {
+            /*for node in octree.GetLeafNodes() { .   will need editing and be based on corners instead
                 let position = octree.GetLeafPosition(node).
                             expect("Failed to get position");
                 let leafNodeIndex = octree.GetLeafIndex(position);
@@ -340,11 +357,11 @@ fn main() {
                     for z_ in 0..GRID_SIZE.2 {
                         let xyz = (
                             x_ as f64 / setupParameters.InverseDeltaX + setupParameters.SampleSpaceOffset[0],
-                            y_ as f64 / setupParameters.InverseDeltaX + setupParameters.SampleSpaceOffset[0],
-                            z_ as f64 / setupParameters.InverseDeltaX + setupParameters.SampleSpaceOffset[0],
+                            y_ as f64 / setupParameters.InverseDeltaY + setupParameters.SampleSpaceOffset[1],
+                            z_ as f64 / setupParameters.InverseDeltaZ + setupParameters.SampleSpaceOffset[2],
                         );
-
-                        let leafNodeIndex = octree.GetLeafIndex(xyz);
+                        
+                        let leafNodeIndex = octree.GetLeafIndex(&xyz);
                         let distance = octree.NearestNeighborSearch(&pointCloud, leafNodeIndex, xyz);
                         distanceField[x_ + (y_ + z_ * GRID_SIZE.1) * GRID_SIZE.0] =
                             distance.expect("Failed to get distance");
@@ -417,7 +434,7 @@ fn main() {
                 for y in 0..GRID_SIZE.1 {
                     for z in 0..GRID_SIZE.2 {
                         let position = (x as f64, y as f64, z as f64);
-                        let leafNodeIndex = octree.GetLeafIndex(position);
+                        let leafNodeIndex = octree.GetLeafIndex(&position);
                         let distance = octree.NearestNeighborSearch(&surfacePoints,
                                 leafNodeIndex, position).
                                 expect("Failed to get distance");
@@ -433,7 +450,7 @@ fn main() {
                         }
 
                         distanceField[index] = distance *
-                                    sign as f64 +
+                                    (sign * 0 + 1) as f64 +
                                     setupParameters.IsoContourLevel;
                     }
                 }
@@ -451,6 +468,22 @@ fn main() {
 
         }
     }
+
+    // testing rendering
+    let slicePositionZ = 25usize;
+    for x in 0..GRID_SIZE.0 {
+        for y in 0..GRID_SIZE.1 {
+            if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel * 0.5 {
+                print!("##");
+            } else if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel {
+                print!("//");
+            } else {
+                print!("  ");
+            }
+        }
+        println!();
+    }
+
 }
 
 
