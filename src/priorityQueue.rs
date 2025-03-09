@@ -23,6 +23,7 @@ struct Node {
     depth: usize,
     // just swap this to reduce memory movement
     value: (f64, usize),
+    changedL: bool,  // the left/right and if they moved forward
 }
 
 
@@ -66,21 +67,24 @@ impl MinHeapBinaryTree {
                 leftChild: None,
                 rightChild: None,
                 parent,
-                incompleteNodeLeft: Some(self.nextLayer.len()),
-                incompleteNodeRight: Some(self.nextLayer.len() + 1),
+                incompleteNodeLeft: None,
+                incompleteNodeRight: None,
                 typeOfFutureChildren: FutureChildType::Incomplete,
                 depth,
                 value,
+                changedL: false,
             };
 
             // pushing the new future children
             if depth >= self.deepest {
-                self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
-                self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
                 newNode.typeOfFutureChildren = FutureChildType::NextLayer;
-                newNode.incompleteNodeLeft = Some(self.nextLayer.len() - 1);
-                newNode.incompleteNodeRight = Some(self.nextLayer.len() - 2);
+                newNode.incompleteNodeLeft = Some(self.nextLayer.len());
+                newNode.incompleteNodeRight = Some(self.nextLayer.len() + 1);
+                self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
+                self.nextLayer.push((Some(self.numberOfNodes), depth + 1));
             } else {
+                newNode.incompleteNodeLeft = Some(self.incompleteNodes.len());
+                newNode.incompleteNodeRight = Some(self.incompleteNodes.len() + 1);
                 self.incompleteNodes.push((Some(self.numberOfNodes), depth + 1));
                 self.incompleteNodes.push((Some(self.numberOfNodes), depth + 1));
             }
@@ -95,6 +99,7 @@ impl MinHeapBinaryTree {
             if self.childReferences[validParent].leftChild.is_none() {
                 self.childReferences[validParent].leftChild = Some(self.numberOfNodes - 1);
                 self.childReferences[validParent].incompleteNodeLeft = None;
+                self.childReferences[validParent].changedL = false;  // resetting
             } else {
                 self.childReferences[validParent].rightChild = Some(self.numberOfNodes - 1);
                 self.childReferences[validParent].incompleteNodeRight = None;
@@ -121,20 +126,29 @@ impl MinHeapBinaryTree {
                 }
             }
         }
-        
-        // moving all nodes from the next depth to the incompelte buffer
-        while let Some(node) = self.nextLayer.pop() {
-            if let Some(index) = node.0 {
-                if self.childReferences[index].leftChild == node.0 {
-                    self.childReferences[index].incompleteNodeLeft = Some(self.incompleteNodes.len());
-                } else {
-                    self.childReferences[index].incompleteNodeRight = Some(self.incompleteNodes.len());
+
+        // it could be that it was an invalid node
+        if self.incompleteNodes.is_empty() {
+            // moving all nodes from the next depth to the incompelte buffer
+            while let Some(node) = self.nextLayer.pop() {
+                if let Some(index) = node.0 {  // index == parent?
+                    if let Some(_parent) = self.childReferences.get(index) {
+                        if self.childReferences[index].incompleteNodeLeft == Some(self.nextLayer.len()) &&
+                            !self.childReferences[index].changedL {
+                            
+                            self.childReferences[index].incompleteNodeLeft = Some(self.incompleteNodes.len());
+                            self.childReferences[index].changedL = true;
+                        } else {
+                            self.childReferences[index].incompleteNodeRight = Some(self.incompleteNodes.len());
+                        }
+                        self.childReferences[index].typeOfFutureChildren = FutureChildType::Incomplete;
+                        self.incompleteNodes.push((Some(index), self.incompleteNodes.len()));
+                    }
                 }
-                self.childReferences[index].typeOfFutureChildren = FutureChildType::Incomplete;
             }
-            self.incompleteNodes.push(node);
+            self.deepest += 1;  // the next layer has been reached
         }
-        self.deepest += 1;  // the next layer has been reached
+        
         // calling insert to actually insert a value
         self.Push(value);
     }
@@ -146,13 +160,13 @@ impl MinHeapBinaryTree {
         // swap the root node down until it satisifes the rules
 
         // getting the leaf node, and then finding the next next leaf node
-        // does this work, or is this completely flawed??
+        // does this work, or is this completely flawed??   (from basic testing it seems true? none of them ever had a child)
         let initialValue = Some(self.childReferences[0].value);
         if let Some(node) = self.childReferences.pop() {
             self.numberOfNodes -= 1;
             // updating the node's parent to not reference it and removing any
             // potential new positions from the vector of them
-            if let Some(parent) = node.parent {
+            if let Some(parent) = node.parent {  // 0 is the root, which would fail this check so it's safe to use as an exception case
                 if self.childReferences[parent].leftChild == Some(self.childReferences.len()) {
                     self.childReferences[parent].leftChild = None;
                     self.childReferences[parent].incompleteNodeLeft = Some(self.incompleteNodes.len());
@@ -160,12 +174,30 @@ impl MinHeapBinaryTree {
                     self.childReferences[parent].rightChild = None;
                     self.childReferences[parent].incompleteNodeRight = Some(self.incompleteNodes.len());
                 }
-                self.incompleteNodes.push((Some(0), node.depth));
+
+                // is this correct? it should be push the parent right? not the root?
+                self.incompleteNodes.push((Some(parent), node.depth));
             } else {
                 // removing the root node
                 self.childReferences.clear();
                 self.incompleteNodes = vec![(None, 0)];
+                self.numberOfNodes = 0;
                 return initialValue;
+            }
+            
+            // updating the deleted nodes incomplete references
+            if matches!(node.typeOfFutureChildren, FutureChildType::NextLayer) {
+                if let Some(index) = node.incompleteNodeLeft {
+                    self.nextLayer[index] = (None, 0);
+                } if let Some(index) = node.incompleteNodeRight {
+                    self.nextLayer[index] = (None, 0);
+                }
+            } else {
+                if let Some(index) = node.incompleteNodeLeft {
+                    self.incompleteNodes[index] = (None, 0);
+                } if let Some(index) = node.incompleteNodeRight {
+                    self.incompleteNodes[index] = (None, 0);
+                }
             }
 
             self.childReferences[0].value = node.value;
@@ -197,7 +229,7 @@ impl MinHeapBinaryTree {
                     return initialValue;
                 }
             }
-        } 
+        }
 
         None  // no valid nodes to be retreaved
     }
