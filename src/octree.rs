@@ -64,7 +64,7 @@ lazy_static::lazy_static! {
 pub struct Octree {
     childPointReferences: Vec <[Option <usize>; 8]>,
     positionIndexes: Vec <Vec <usize>>,
-    leafNodePositions: Vec <Option <(f64, f64, f64)>>,
+    nodePositions: Vec <(f64, f64, f64)>,
     leafNodeDepths: Vec <Option <usize>>,
     numberOfLeafNodes: usize,
     offsetX: f64,
@@ -82,7 +82,7 @@ pub struct Octree {
     leafNodes: Vec <usize>,
 
     // corner references...    using morton codes floor((pos - minTreeBoundingPos) / smallestCellSize)
-    cornerPoints: std::collections::HashMap <u128, (f64, f64, f64)>,
+    pub cornerPoints: std::collections::HashMap <u128, (f64, f64, f64)>,
     
     // the indexes in the corner points hash-map
     // a hash-map is needed to allow for checking
@@ -98,7 +98,7 @@ impl Octree {
         Octree {
             childPointReferences: vec!(),
             positionIndexes: vec!(),
-            leafNodePositions: vec!(),
+            nodePositions: vec!(),
             leafNodeDepths: vec!(),
             numberOfLeafNodes: 0,
             offsetX: xOffset,
@@ -128,20 +128,47 @@ impl Octree {
     }
 
 
-    pub fn GetCornerMortonCode (&self, posX: f64, posY: f64, posZ: f64) -> u128 {
+
+
+
+    // TEMP remove once debuged
+    pub fn GetAllNeighborConersTemp (&self, leafNode: usize) -> Vec <(f64, f64, f64)> {
+        let leafIndex = self.GetLeafNodeReverseIndex(leafNode);
+        let mut points: Vec <(f64, f64, f64)> = vec!();
+
+        for cornerCode in &self.nodeCornerReferences[leafIndex] {
+            points.push(
+                *self.cornerPoints.get(cornerCode).expect("Failed...")
+            );
+        }
+
+        println!(": {}", self.cellNeighborRefferences[leafNode].len());
+        for neighborIndex in &self.cellNeighborRefferences[leafNode] {
+            for cornerCode in &self.nodeCornerReferences[
+                self.GetLeafNodeReverseIndex(*neighborIndex)
+            ] {
+                points.push(
+                    *self.cornerPoints.get(cornerCode).expect("Failed...")
+                );
+            }
+        }
+
+        points
+    }
+
+
+
+
+
+    fn GetCornerMortonCode (&self, posX: f64, posY: f64, posZ: f64) -> u128 {
         // getting the intager position for the morton code
         // floor((pos - minTreeBoundingPos) / smallestCellSize)
+        // is the tiny offset needed to prevent float point errors?
         let x = ((posX - self.offsetX) / self.depthSizeScalars[self.maxDepth]) as u32;
         let y = ((posY - self.offsetY) / self.depthSizeScalars[self.maxDepth]) as u32;
         let z = ((posZ - self.offsetZ) / self.depthSizeScalars[self.maxDepth]) as u32;
 
-        // getting the morton code
-        let mut mortonCode: u128 = 0;
-        for i in 0..32 {  // 64-bit integer
-            mortonCode |= (((x >> i) & 1) as u128) << (3 * i);
-            mortonCode |= (((y >> i) & 1) as u128) << (3 * i + 1);
-            mortonCode |= (((z >> i) & 1) as u128) << (3 * i + 2);
-        } mortonCode
+        self.GetMortonCode(x, y, z)
     }
 
     pub fn GenerateCornerPointsChache (&mut self) -> usize{
@@ -151,21 +178,21 @@ impl Octree {
         let mut depthScalar: f64;
         let mut cellSize: (f64, f64, f64);
         let mut position: (f64, f64, f64);
+        let mut newPosition: (f64, f64, f64);
         let mut cornerOffset: (usize, usize, usize);
         // going through every leaf node
         // leaf index is being used; use a binary search to go
         // from a node index back to leaf index (not needed inside here)
         for (leafIndex, nodeIndex) in self.leafNodes.iter().enumerate() {
-            position = self.GetLeafPosition(*nodeIndex).
-                    expect("Failed to get leaf node position...");
+            position = self.GetNodePosition(*nodeIndex);
             depthScalar = self.depthSizeScalars[
                 self.leafNodeDepths[*nodeIndex].
                     expect("Failed to get node depth...")
             ];
             cellSize = (
-                self.sizeX * depthScalar,
-                self.sizeY * depthScalar,
-                self.sizeZ * depthScalar,
+                self.sizeX * depthScalar * 0.5,
+                self.sizeY * depthScalar * 0.5,
+                self.sizeZ * depthScalar * 0.5,
             );
 
             self.nodeCornerReferences.push(vec!());
@@ -175,12 +202,13 @@ impl Octree {
                 cornerOffset = CHILD_OFFSET_ORDER[i];
 
                 // getting the morton code
-                mortonCode = self.GetCornerMortonCode(
-                    position.0 + cellSize.0 * cornerOffset.0 as f64,
-                    position.1 + cellSize.1 * cornerOffset.1 as f64,
-                    position.2 + cellSize.2 * cornerOffset.2 as f64,
+                newPosition = (
+                    position.0 + cellSize.0 * (cornerOffset.0 as f64 * 2.0 - 1.0),
+                    position.1 + cellSize.1 * (cornerOffset.1 as f64 * 2.0 - 1.0),
+                    position.2 + cellSize.2 * (cornerOffset.2 as f64 * 2.0 - 1.0),
                 );
-                if self.cornerPoints.insert(mortonCode, position).is_none() {
+                mortonCode = self.GetCornerMortonCode(newPosition.0, newPosition.1, newPosition.2);
+                if self.cornerPoints.insert(mortonCode, newPosition).is_none() {
                     totalCornerPoints += 1;
                 }
                 self.nodeCornerReferences[leafIndex].push(mortonCode);
@@ -223,11 +251,11 @@ impl Octree {
 
         if depth == self.maxDepth {
             self.leafNodes.push(self.childPointReferences.len());
-            self.leafNodePositions.push(Some((
+            self.nodePositions.push((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
                 newPosition.2 + nodeSize.2 * 0.5
-            )));
+            ));
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
@@ -263,11 +291,11 @@ impl Octree {
 
         if numberBoundingPoints == 0 {
             self.leafNodes.push(self.childPointReferences.len());
-            self.leafNodePositions.push(Some((
+            self.nodePositions.push((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
                 newPosition.2 + nodeSize.2 * 0.5
-            )));
+            ));
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
@@ -279,11 +307,11 @@ impl Octree {
 
         if numberBoundingPoints == 1 {
             self.leafNodes.push(self.childPointReferences.len());
-            self.leafNodePositions.push(Some((
+            self.nodePositions.push((
                 newPosition.0 + nodeSize.0 * 0.5,
                 newPosition.1 + nodeSize.1 * 0.5,
                 newPosition.2 + nodeSize.2 * 0.5
-            )));
+            ));
             self.leafNodeDepths.push(Some(depth));
             self.childPointReferences.push([ None; 8 ]);
 
@@ -309,7 +337,11 @@ impl Octree {
         self.childPointReferences.push(newChildIndexes);
         self.positionIndexes.push(vec!());
         self.leafNodeDepths.push(None);
-        self.leafNodePositions.push(None);
+        self.nodePositions.push((
+            newPosition.0 + nodeSize.0 * 0.5,
+            newPosition.1 + nodeSize.1 * 0.5,
+            newPosition.2 + nodeSize.2 * 0.5
+        ));
         self.cellNeighborRefferences.push(vec!());
 
         self.childPointReferences.len() - 1
@@ -319,7 +351,7 @@ impl Octree {
     pub fn GenerateNodeReferenceChache (&mut self) {
         self.NodeReferenceCacheRecursiveAscent(0, self.rootNodeReferenceIndex);
     }
-
+    
     fn NodeReferenceCacheRecursiveAscent (&mut self, depth: usize, childIndex: usize) {
         for i in 0..8 {
             if let Some(child) = self.childPointReferences[childIndex][i] {
@@ -348,7 +380,7 @@ impl Octree {
             self.offsetX, self.offsetY, self.offsetZ
         );
 
-        let mut childOffset: [usize; 3];
+        let mut childOffset: [usize; 3] = [0usize; 3];
         let mut widthScalar: f64;
         let mut cellSize: (f64, f64, f64);
         let mut ascentChildIndex: usize;
@@ -360,15 +392,14 @@ impl Octree {
         shiftBuffer.push([0usize; 3]);
 
         let searchPosition =
-            self.GetLeafPosition(childIndex).
-                expect("Failed to get leaf node position");
+            self.GetNodePosition(childIndex);
         
-        for i in 1..depth {
+        for i in 1..=depth {
             widthScalar = self.depthSizeScalars[i];
             cellSize = (
-                self.sizeX * widthScalar - 0.00001,
-                self.sizeY * widthScalar - 0.00001,
-                self.sizeZ * widthScalar - 0.00001,
+                self.sizeX * widthScalar,
+                self.sizeY * widthScalar,
+                self.sizeZ * widthScalar,
             );
 
             childOffset = [
@@ -377,31 +408,23 @@ impl Octree {
                 ((searchPosition.2 - base.2) / cellSize.2) as usize,
             ];
 
-            shiftBuffer.push(childOffset);
-
-            ascentChildIndex = *CHILD_OFFSET_ORDER_INDEX.get(&childOffset)
-                               .expect("Invalid child offset");
-            ascentNodeIndex = self.childPointReferences[ascentNodeIndex][ascentChildIndex]
-                              .expect("Failed to gather child point reference");
-            
             base = (
                 base.0 + cellSize.0 * childOffset[0] as f64,
                 base.1 + cellSize.1 * childOffset[1] as f64,
                 base.2 + cellSize.2 * childOffset[2] as f64,
             );
 
+            shiftBuffer.push(childOffset);
+
+            ascentChildIndex = *CHILD_OFFSET_ORDER_INDEX.get(&childOffset)
+                               .expect("Invalid child offset");
+            ascentNodeIndex = self.childPointReferences[ascentNodeIndex][ascentChildIndex]
+                              .expect("Failed to gather child point reference");
+
             self.depthIndexBufferSearch.push(ascentNodeIndex);
         }
 
-        self.depthIndexBufferSearch.push(childIndex);
-
-        childOffset = [
-            ((searchPosition.0 - base.0) / nodeSize.0 - 0.00001) as usize,
-            ((searchPosition.1 - base.1) / nodeSize.1 - 0.00001) as usize,
-            ((searchPosition.2 - base.2) / nodeSize.2 - 0.00001) as usize,
-        ];
-        shiftBuffer.push(childOffset);
-
+        // this should be true? It should go too high or wide or anything right?
         self.GetChildFaceNodesRecursive(
             depth,
             self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][
@@ -409,11 +432,16 @@ impl Octree {
                         &[1 - childOffset[0], childOffset[1], childOffset[2]]
                     ).expect("Invalid offset")
                 ].expect("Failed to get child"),
-            1 - childOffset[0],
+            childOffset[0],
             0,
             1,
-            2
+            2,
+            depth,
+            (self.offsetX, self.offsetY, self.offsetZ),
+            (self.sizeX, self.sizeY, self.sizeZ)
         );
+
+        // this should be true? It should go too high or wide or anything right?
         self.GetChildFaceNodesRecursive(
             depth,
             self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][
@@ -421,11 +449,16 @@ impl Octree {
                         &[childOffset[0], 1 - childOffset[1], childOffset[2]]
                     ).expect("Invalid offset")
                 ].expect("Failed to get child"),
-            1 - childOffset[1],
+            childOffset[1],
             1,
             0,
-            2
+            2,
+            depth,
+            (self.offsetX, self.offsetY, self.offsetZ),
+            (self.sizeX, self.sizeY, self.sizeZ)
         );
+
+        // this should be true? It should go too high or wide or anything right?
         self.GetChildFaceNodesRecursive(
             depth,
             self.childPointReferences[self.depthIndexBufferSearch[depth - 1]][
@@ -433,60 +466,82 @@ impl Octree {
                         &[childOffset[0], childOffset[1], 1 - childOffset[2]]
                     ).expect("Invalid offset")
                 ].expect("Failed to get child"),
-            1 - childOffset[2],
+            childOffset[2],
             2,
             0,
-            1
+            1,
+            depth,
+            (self.offsetX, self.offsetY, self.offsetZ),
+            (self.sizeX, self.sizeY, self.sizeZ)
         );
 
-        self.FindChildFace(depth, &shiftBuffer, 0);
-        self.FindChildFace(depth, &shiftBuffer, 1);
-        self.FindChildFace(depth, &shiftBuffer, 2);
+        self.FindChildFace(
+            depth, &shiftBuffer, 0,
+            (self.offsetX, base.1, base.2),
+            (self.sizeX, nodeSize.1, nodeSize.2)
+        );
+        self.FindChildFace(
+            depth, &shiftBuffer, 1,
+            (base.0, self.offsetY, base.2),
+            (nodeSize.0, self.sizeY, nodeSize.2)
+        );
+        self.FindChildFace(
+            depth, &shiftBuffer, 2,
+            (base.0, base.1, self.offsetZ),
+            (nodeSize.0, nodeSize.1, self.sizeZ)
+        );
     }
 
-    fn FindChildFace (&mut self, depth: usize, shiftBuffer: &Vec <[usize; 3]>, axis: usize) {
-        let lookingForShift = 1 - shiftBuffer[depth][axis];
+    fn FindChildFace (&mut self, depth: usize, shiftBuffer: &Vec <[usize; 3]>, axis: usize, pos: (f64, f64, f64), size: (f64, f64, f64)) {
+        let lookingForShift = shiftBuffer[depth][axis];
 
-        for i in (0..depth).rev() {
-            if shiftBuffer[i][axis] == lookingForShift {
+        for d in (0..(depth-1)).rev() {
+            if shiftBuffer[d][axis] == lookingForShift {
+                let newChildIndex: usize;
                 let offsetIndex: usize;
                 let indexI: usize;
                 let indexJ: usize;
 
                 match axis {
                     0 => {
-                        offsetIndex = *CHILD_OFFSET_ORDER_INDEX.get(&[
-                            shiftBuffer[depth][axis], 0, 0
-                        ]).expect("Invalid shift");
+                        offsetIndex =
+                            *CHILD_OFFSET_ORDER_INDEX.get(&[
+                                lookingForShift, 1-shiftBuffer[d][1], 1-shiftBuffer[d][2]
+                            ]).expect("Invalid shift");
                         indexI = 1; indexJ = 2;
                     },
                     1 => {
-                        offsetIndex = *CHILD_OFFSET_ORDER_INDEX.get(&[
-                            0, shiftBuffer[depth][axis], 0
-                        ]).expect("Invalid shift");
+                        offsetIndex =
+                            *CHILD_OFFSET_ORDER_INDEX.get(&[
+                                1-shiftBuffer[d][0], lookingForShift, 1-shiftBuffer[d][2]
+                            ]).expect("Invalid shift");
                         indexI = 0; indexJ = 2;
                     },
                     _ => {
-                        offsetIndex = *CHILD_OFFSET_ORDER_INDEX.get(&[
-                            0, 0, shiftBuffer[depth][axis]
-                        ]).expect("Invalid shift");
+                        offsetIndex =
+                            *CHILD_OFFSET_ORDER_INDEX.get(&[
+                                1-shiftBuffer[d][0], 1-shiftBuffer[d][1], lookingForShift
+                            ]).expect("Invalid shift");
                         indexI = 0; indexJ = 1;
                     },
                 }
-
-                let newChildIndex =
-                    self.childPointReferences[self.depthIndexBufferSearch[i]]
-                    [offsetIndex].expect("Failed to get child");
+                
+                newChildIndex =
+                    self.childPointReferences[self.depthIndexBufferSearch[d]]
+                        [offsetIndex].expect("Failed to get child");
                 
                 self.GetChildFaceNodesRecursive (
                     depth,
                     newChildIndex,
-                    shiftBuffer[depth][axis],
+                    1 - shiftBuffer[depth][axis],
                     axis,
                     indexI,
                     indexJ,
+                    d,
+                    pos,
+                    size
                 );
-                
+
                 return;
             }
         }
@@ -495,7 +550,10 @@ impl Octree {
     fn GetChildFaceNodesRecursive (
         &mut self, depth: usize, childIndex: usize,
         shift: usize, axis: usize,
-        indexI: usize, indexJ: usize) {
+        indexI: usize, indexJ: usize,
+        currentDepth: usize,
+        pos: (f64, f64, f64), size: (f64, f64, f64)
+    ) {
 
         let mut offsetKey = [0usize, 0usize, 0usize];
         offsetKey[axis] = shift;
@@ -511,19 +569,57 @@ impl Octree {
                         &offsetKey).expect("Invalid shift")];
                 
                 if newChildIndex.is_none() {
-                    self.cellNeighborRefferences[self.depthIndexBufferSearch[depth]].
-                            push(childIndex);
+                    let widthScalar = self.depthSizeScalars[currentDepth + 1];
+                    let cellSize = (
+                        self.sizeX * widthScalar,
+                        self.sizeY * widthScalar,
+                        self.sizeZ * widthScalar,
+                    );
+                    let cellPosition = self.GetNodePosition(childIndex);
+
+                    if ((cellPosition.0 - cellSize.0*0.5 < pos.0 + size.0 && cellPosition.0 + cellSize.0*0.5 > pos.0 ) ||
+                        (pos.0 < cellPosition.0 + cellSize.0*0.5 && pos.0 + size.0 > cellPosition.0 - cellSize.0*0.5)) &&
+                       ((cellPosition.1 - cellSize.1*0.5 < pos.1 + size.1 && cellPosition.1 + cellSize.1*0.5 > pos.1 ) ||
+                        (pos.1 < cellPosition.1 + cellSize.1*0.5 && pos.1 + size.1 > cellPosition.1 - cellSize.1*0.5)) &&
+                       ((cellPosition.2 - cellSize.2*0.5 < pos.2 + size.2 && cellPosition.2 + cellSize.2*0.5 > pos.2) ||
+                        (pos.2 < cellPosition.2 + cellSize.2*0.5 && pos.2 + size.2 > cellPosition.2 - cellSize.2*0.5)
+                    ) {
+                        self.cellNeighborRefferences[self.depthIndexBufferSearch[depth]].
+                                push(childIndex);
+                    }
                     return;
                 }
 
-                self.GetChildFaceNodesRecursive(
-                    depth,
-                    newChildIndex.unwrap(),
-                    shift,
-                    axis,
-                    indexI,
-                    indexJ
+                // checking the position (again, finding child's faces fault)
+                let widthScalar = self.depthSizeScalars[currentDepth + 1];
+                let cellSize = (
+                    self.sizeX * widthScalar,
+                    self.sizeY * widthScalar,
+                    self.sizeZ * widthScalar,
                 );
+                let cellPosition = self.GetNodePosition(newChildIndex.unwrap());
+                    // left edge is before right edge                   right edge is beyond left edge
+                if true || (cellPosition.0 - cellSize.0*0.5 < pos.0 + size.0 && cellPosition.0 + cellSize.0*0.5 > pos.0 &&
+                    cellPosition.1 - cellSize.1*0.5 < pos.1 + size.1 && cellPosition.1 + cellSize.1*0.5 > pos.1 &&
+                    cellPosition.2 - cellSize.2*0.5 < pos.2 + size.2 && cellPosition.2 + cellSize.2*0.5 > pos.2) ||
+
+                    // right edge is beyond left edge                   right edge is beyond left edge
+                   (pos.0 < cellPosition.0 + cellSize.0*0.5 && pos.0 + size.0 > cellPosition.0 - cellSize.0*0.5 &&
+                    pos.1 < cellPosition.1 + cellSize.1*0.5 && pos.1 + size.1 > cellPosition.1 - cellSize.1*0.5 &&
+                    pos.2 < cellPosition.2 + cellSize.2*0.5 && pos.2 + size.2 > cellPosition.2 - cellSize.2*0.5) {
+                    
+                    self.GetChildFaceNodesRecursive(
+                        depth,
+                        newChildIndex.unwrap(),
+                        shift,
+                        axis,
+                        indexI,
+                        indexJ,
+                        currentDepth + 1,
+                        pos,
+                        size
+                    );
+                }
             }
         }
     }
@@ -670,11 +766,13 @@ impl Octree {
                 }
 
                 distance = self.GetSquaredDistance(
-                    self.GetLeafPosition(*neighborIndex).
-                                expect("Failed to get leaf position"),
+                    self.GetNodePosition(*neighborIndex),
                     queryPoint
                 );
 
+                // ===================================================================================================
+                //                                  Add a distance check to cull bad options early
+                // ===================================================================================================
                 queue.Push((
                     distance, *neighborIndex
                 ));
@@ -690,11 +788,28 @@ impl Octree {
         self.leafNodes.clone()
     }
 
-    pub fn GetLeafPosition (&self, nodeIndex: usize) -> Option <(f64, f64, f64)> {
-        if let Some(node) = self.leafNodePositions.get(nodeIndex) {
-            if node.is_none() { return None; }
-            return *node;
-        } None
+    pub fn GetNodePosition (&self, nodeIndex: usize) -> (f64, f64, f64) {
+        self.nodePositions[nodeIndex]
+        //if let Some(node) = self.nodePositions.get(nodeIndex) {
+        //    if node.is_none() { return None; }
+        //    return *node;
+        //} None
+    }
+
+    pub fn GetLeafNodeReverseIndex (&self, leafNode: usize) -> usize {
+        BinarySearch(&self.leafNodes, &leafNode).
+            expect("Failed to get point")
+    }
+
+    // does this need to be public?
+    pub fn GetMortonCode (&self, x: u32, y: u32, z: u32) -> u128 {
+        // getting the morton code
+        let mut mortonCode: u128 = 0;
+        for i in 0..32 {  // 64-bit integer
+            mortonCode |= (((x >> i) & 1) as u128) << (3 * i);
+            mortonCode |= (((y >> i) & 1) as u128) << (3 * i + 1);
+            mortonCode |= (((z >> i) & 1) as u128) << (3 * i + 2);
+        } mortonCode
     }
 
 }
