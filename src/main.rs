@@ -5,10 +5,14 @@ Improve the octree subdivision system to be smarter about searching for intersec
 Start using the node corners for the array in distance field calculations
 Impliment dual contouring or something like it for water tight iso contour extraction
 
+Add distance check before pushing items to the priority queue
+    Many of the items being pushed could be cancled out early
+    It costs one square root operation and saves many, many checks
 
-
-leaf node getting is good
-the queue seemed to check out earlier, and it doesn't line up well with the type of error being random chunks at random specific areas
+Finish fixing the traversal caching
+    The bug is narrowed down to the culling system in the final stage
+    All neighbors are being correctly generated it seems (test size 1 node so errors are possible)
+    However the wrong neighbors are being culled, and some aren't being culled
 
 */
 
@@ -33,6 +37,11 @@ const USING_OLD_SDF: bool = true;
 //const OBJ_SAVE_FILE: &str = "";
 
 const LOAD_PCD: bool = false;
+const WRITE_OCTREE_PCD: bool = true;
+const OCTREE_PCD_FILE: &str = "assets/octree_neighbors.ply";
+
+const WRITE_OUTPUT_PCD: bool = false;
+const OCTREE_OUTPUT_PCD_FILE: &str = "assets/octree_output_testhallowsphere.ply";
 //const PCD_FILE: &str = "";
 //const POINTS_LOADED_PERCENT: f64 = 100.0 / (100.0);
 
@@ -61,6 +70,145 @@ const AUTO_SET: bool = true;
 //=========================================================================================================
 
 
+fn CalculateSigns (setupParameters: &SetupParameters,
+              octree: &mut octree::Octree,
+              distanceField: &Vec <(f64, u128)>,
+              signedField: &mut Vec <i8>,
+              numberOfNodes: usize,
+    ) {
+    
+    // umm...... search algerithm still has a couple random artifacts (3 in this case)    still has some? but it's better
+    // the chaching system, or searching system may be borken...... :(    probably still true......
+    // probably becoming random from overflow errors; very sad;       nope, it's in here. No overflow and the total dst is the same every time
+    let mut cummulative = 0.0;
+    for dst in distanceField {
+        cummulative += dst.0;
+    }
+
+    println!("Total dist: {}", cummulative);
+
+    // getting the base node at the corner
+    let leafIndex = octree.GetLeafIndex(&(
+        setupParameters.SampleSpaceBounds[0] - setupParameters.SampleSpaceOffset[0],
+        setupParameters.SampleSpaceBounds[1] - setupParameters.SampleSpaceOffset[1],
+        setupParameters.SampleSpaceBounds[2] - setupParameters.SampleSpaceOffset[2],
+    ));
+    let startingIndex = octree.GetCornerPositionIndex(leafIndex, 0);
+
+    // the starting index is random but that makes sense considering the order of a hashmap is non-deterministic
+    println!("Starting Leaf: {}", startingIndex);
+
+    // creating buffers for solid points, and hallow points
+    let mut solidEdgesBuffer: Vec <(usize, usize)> = vec!();
+    let mut voidPointsBuffer = vec![
+        (startingIndex, leafIndex)
+    ];
+
+    let mut sign = 1;
+
+    let mut numSolid = 0;
+    let mut numHallow = 0;
+    let mut numWall = 0;
+    let mut numFound = 0;
+
+    let mut newPointsBuffer: Vec <(usize, usize)> = vec!();
+
+    let mut leaf: usize;
+    let mut cornerNode: usize;
+
+    let mut taken: std::collections::HashMap <usize, bool> = std::collections::HashMap::new();
+    taken.insert(startingIndex, true);
+
+    // starting the itteration and going until every position has been filled
+    let mut i = 0;
+    while !voidPointsBuffer.is_empty() {
+        println!("Itteration {}", i);
+        i += 1;
+        // emptying void points buffer
+        while !newPointsBuffer.is_empty() || voidPointsBuffer.len() > 0 {
+            while let Some(newVoidPoint) = newPointsBuffer.pop() {
+                voidPointsBuffer.push(newVoidPoint);
+            }
+            
+            println!("Len void: {}    Added: {}", voidPointsBuffer.len(), numFound);
+            while let Some((nodeIndex, leafIndex)) = voidPointsBuffer.pop() {
+                // updating the sign
+                if signedField[nodeIndex] != 0 {  continue;  }
+                
+                //println!("({}): signedField: {}", nodeIndex, signedField[nodeIndex]);
+                signedField[
+                    nodeIndex
+                ] = sign;
+
+                numFound += 1;
+
+                // getting neighboring cells
+                for neighborIndex in octree.GetNodeNeighbors(leafIndex) {
+                    leaf = octree.GetLeafNodeReverseIndex(neighborIndex);
+                    for i in 0..8usize {
+                        cornerNode = octree.GetCornerPositionIndex(leaf, i);
+                        if taken.contains_key(&cornerNode) {  continue;  }
+                        taken.insert(cornerNode, true);
+                        
+                        if distanceField[cornerNode].0 < setupParameters.IsoContourLevel {
+                            solidEdgesBuffer.push((cornerNode, neighborIndex));
+                            numSolid += 1;
+                        } else {
+                            newPointsBuffer.push((cornerNode, neighborIndex));
+                            if sign == 1 {numHallow += 1;}
+                            else {numWall += 1;}
+                        }
+                    }
+                }
+            }
+        }
+        
+        println!("Past!!!");
+        // emptying the solid edges buffer
+        while !newPointsBuffer.is_empty() || solidEdgesBuffer.len() > 0 {
+            while let Some(newEdgePoint) = newPointsBuffer.pop() {
+                solidEdgesBuffer.push(newEdgePoint);
+            }
+            println!("Len void: {}    Added: {}", solidEdgesBuffer.len(), numFound);
+
+            while let Some((nodeIndex, leafIndex)) = solidEdgesBuffer.pop() {
+                if signedField[nodeIndex] != 0 {  continue;  }
+                
+                signedField[
+                    nodeIndex
+                ] = -1;
+
+                numFound += 1;
+
+                for neighborIndex in octree.GetNodeNeighbors(leafIndex) {
+                    leaf = octree.GetLeafNodeReverseIndex(neighborIndex);
+                    for i in 0..8usize {
+                        cornerNode = octree.GetCornerPositionIndex(leaf, i);
+                        if taken.contains_key(&cornerNode) {  continue;  }
+                        taken.insert(cornerNode, true);
+                        
+                        if distanceField[cornerNode].0 < setupParameters.IsoContourLevel {
+                            newPointsBuffer.push((cornerNode, neighborIndex));
+                            numSolid += 1;
+                        } else {
+                            voidPointsBuffer.push((cornerNode, neighborIndex));
+                            if sign == 1 {numHallow += 1;}
+                            else {numWall += 1;}
+                        }
+                    }
+                }
+            }
+        }
+
+        sign *= -1;
+    }
+
+    println!("({}) Solid: {}    Voids;  Hallow: {}  Solid: {}", numFound, numSolid, numHallow, numWall);
+}
+
+
+
+/*
 // the offsets for neighbors
 const FLOOD_FILL_NEIGHBOR_OFFSETS: [(isize, isize, isize); 6] = [
     (1 , 0 , 0 ),
@@ -151,7 +299,7 @@ fn CalculateSigns (setupParameters: &SetupParameters,
             }
         }
     }
-}
+}*/
 
 
 
@@ -173,7 +321,7 @@ fn CalculateSigns (setupParameters: &SetupParameters,
 
 
 fn FibonacciSphere (samples: isize, pointCloud: &mut Vec <(f64, f64, f64)>,
-                    scalingFactor: f64, offset: f64) {
+                    scalingFactor: f64, offset: (f64, f64, f64)) {
     
     let phi = std::f64::consts::PI * (std::f64::consts::FRAC_1_SQRT_2 - 1.0);  // the magic number is sqrt 0.5
 
@@ -187,9 +335,9 @@ fn FibonacciSphere (samples: isize, pointCloud: &mut Vec <(f64, f64, f64)>,
         let z = theta.sin() * radius;
 
         pointCloud.push((
-            x * scalingFactor + offset,
-            y * scalingFactor + offset,
-            z * scalingFactor + offset,
+            x * scalingFactor + offset.0,
+            y * scalingFactor + offset.1,
+            z * scalingFactor + offset.2,
         ));
     }
 }
@@ -213,16 +361,19 @@ pub struct SetupParameters {
 
 fn main() {
 
+    let mut initoctree: Option <octree::Octree> = None;
+
     let mut setupParameters = SetupParameters {
         SampleSpaceBounds: [0.0, 0.0, 0.0],
         SampleSpaceOffset: [0.0, 0.0, 0.0],
-        IsoContourLevel: 4.75,
+        IsoContourLevel: 4.75,// * 0.25,
         InverseDeltaX: 1.0 / (1.0),
         InverseDeltaY: 1.0 / (1.0),
         InverseDeltaZ: 1.0 / (1.0),
     };
 
-    let mut distanceField = [0.0f64; MAX_SAMPLING_SPACE];
+    //let mut distanceField = [0.0f64; MAX_SAMPLING_SPACE];
+    let mut octreeDistanceGrid: Vec <(f64, u128)> = vec!();
 
     if LOADING_DISTANCE_FIELD_SAVE {
         //...
@@ -233,11 +384,13 @@ fn main() {
             //...
         } else {
             if GENERATE_HALLOW_SPHERE {
-                FibonacciSphere(575, &mut pointCloud, 34.0, 50.0);
-                FibonacciSphere(250, &mut pointCloud, 15.0, 50.0);
-            } if GENERATE_SOLID_SPHERE {
-                FibonacciSphere(200, &mut pointCloud, 14.0, 50.0);
-            } if GENERATE_CUBE {
+                FibonacciSphere(575*1, &mut pointCloud, 34.0, (50.0, 50.0, 50.0));
+                FibonacciSphere(250*1, &mut pointCloud, 15.0, (50.0, 50.0, 50.0));
+            }
+            if GENERATE_SOLID_SPHERE {
+                FibonacciSphere(200, &mut pointCloud, 14.0, (50.0, 50.0, 50.0));
+            }
+            if GENERATE_CUBE {
                 for x in 0..8 {
                     for y in 0..8 {
                         for z in 0..8 {
@@ -319,17 +472,60 @@ fn main() {
                 MAX_OCTREE_DEPTH
             );
             octree.SubDivide(&pointCloud);
-            octree.GenerateNodeReferenceChache();
-            let numCorners = octree.GenerateCornerPointsChache();
+            octree.GenerateNodeReferenceCache();
+            let numCorners = octree.GenerateCornerPointsCache();
             println!("Number of corners: {}", numCorners);
 
-            // 0, 0, 0 should be 52.6968; this error is in the algerithms--the c++ code does the same
-            let inputPos = (7.970978545547169, 31.27784731879688, 7.970978545547169);
-            let leafNodeIndex = octree.GetLeafIndex(&inputPos);
-            let dst = octree.NearestNeighborSearch(
-                &pointCloud, leafNodeIndex, inputPos
-            );
-            println!("dst: {}", dst.expect("Failed to get distance"));
+            let ip = (35.23, 43.35, 54.33);
+            let leaf = octree.GetLeafIndex(&ip);
+            
+            if WRITE_OCTREE_PCD {
+                // outputing the points to a point cloud file
+                let samples = 250; // 250
+                let sphereSize = 0.5;  // 0.05
+                let mut outputString = format!("ply\nformat ascii 1.0\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n", numCorners*(samples+1)).to_string();
+                for corner in octree.GetCornerPointKeys() {
+                    let corner = octree.LookupCornerPoint(corner);
+                    // generating a sphere around the point so it renders bigger
+                    for corner in octree.GetAllNeighborCornersTemp(leaf) {
+                    let mut sphere: Vec<(f64, f64, f64)> = vec![
+                        corner
+                    ];
+                    FibonacciSphere(samples as isize, &mut sphere, sphereSize, corner);
+                    for point in sphere {
+                        outputString += &format!("{} {} {} 100 25 25\n", point.0, point.1, point.2);
+                    }} break;
+                }
+                std::fs::write(OCTREE_PCD_FILE, outputString).expect("Unable to write file");
+            }
+
+            for cornerId in octree.GetCornerPointKeys() {
+                let samplePosition = octree.LookupCornerPoint(cornerId);
+                let leafNodeIndex = octree.GetLeafIndex(&(
+                    samplePosition.0 - 0.001,
+                    samplePosition.1 - 0.001,
+                    samplePosition.2 - 0.001
+                ));
+                let dst = octree.NearestNeighborSearch(&pointCloud, leafNodeIndex, samplePosition).
+                expect("Failed to get distance");
+                octreeDistanceGrid.push(
+                    (octree.NearestNeighborSearch(&pointCloud, leafNodeIndex, samplePosition).
+                        expect("Failed to get distance"),
+                    cornerId)
+                );
+                //println!("dst: {}", dst);
+            }
+
+            let mut octreeSignedGrid: Vec <i8> = vec![0i8; numCorners];
+            CalculateSigns(&setupParameters, &mut octree, &octreeDistanceGrid, &mut octreeSignedGrid, numCorners);
+            for (index, point) in octreeDistanceGrid.iter_mut().enumerate() {
+                point.0 *= octreeSignedGrid[index] as f64;
+            }
+
+            /*let corners = octree.GetAllNeighborConersTemp(leafNodeIndex);
+            for corner in corners {
+                println!("[{}, {}, {}],", corner.0, corner.1, corner.2);
+            }*/
             
             /*for _i in 0..1 {
                 let dst = octree.NearestNeighborSearch(
@@ -352,7 +548,7 @@ fn main() {
                 );
             }*/
 
-            for x_ in 0..GRID_SIZE.0 {
+            /*for x_ in 0..GRID_SIZE.0 {
                 for y_ in 0..GRID_SIZE.1 {
                     for z_ in 0..GRID_SIZE.2 {
                         let xyz = (
@@ -367,10 +563,14 @@ fn main() {
                             distance.expect("Failed to get distance");
                     }
                 }
-            }
+            }*/
+
+            // temporary
+            initoctree = Some(octree);
+
         }
 
-        if USING_OLD_SDF {
+        /*if USING_OLD_SDF {
             for x_ in 0..GRID_SIZE.0 {
                 for y_ in 0..GRID_SIZE.1 {
                     for z_ in 0..GRID_SIZE.2 {
@@ -466,22 +666,59 @@ fn main() {
 
             // do marching cubes or dual contouring... (todo)
 
-        }
+        }*/
     }
 
     // testing rendering
-    let slicePositionZ = 25usize;
+    /*let slicePositionZ = 25usize;
     for x in 0..GRID_SIZE.0 {
         for y in 0..GRID_SIZE.1 {
-            if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel * 0.5 {
-                print!("##");
-            } else if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel {
-                print!("//");
-            } else {
-                print!("  ");
-            }
+            //if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel * 0.5 {
+            //    print!("##");
+            //} else if distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0] < setupParameters.IsoContourLevel {
+            //    print!("//");
+            //} else {
+            //    print!("  ");
+            //}
+            let dst = distanceField[x + (y + slicePositionZ * GRID_SIZE.1) * GRID_SIZE.0];
+            print!("{}{} ", std::cmp::min((dst/setupParameters.IsoContourLevel*2.0) as usize, 9), std::cmp::min((dst/setupParameters.IsoContourLevel*2.0) as usize, 9));
         }
         println!();
+    }*/
+
+
+    // finish this... should provide some visualization of what's going on
+    // saving the result (as a point cloud for now...)
+    if WRITE_OUTPUT_PCD {
+        let mut numSolid = 0;
+        // outputing the points to a point cloud file
+        let samples = 250; // 250    5
+        let sphereSize = 0.5;  // 0.05     0.1
+        let mut outputString = "".to_string();
+        let cornersTree = initoctree.unwrap();
+        for (distance, id) in octreeDistanceGrid {
+            
+            if distance < setupParameters.IsoContourLevel {
+                let cornerPosition = cornersTree.LookupCornerPoint(id);
+
+                // generating a sphere around the point so it renders bigger
+                let mut sphere: Vec<(f64, f64, f64)> = vec![
+                    cornerPosition
+                ];
+                FibonacciSphere(samples as isize, &mut sphere, sphereSize, cornerPosition);
+                for point in sphere {
+                    outputString += &format!("{} {} {} 100 25 25\n", point.0, point.1, point.2);
+                }
+                numSolid += 1
+            }
+        }
+
+        let header = format!("ply\nformat ascii 1.0\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n", numSolid*(samples+1));
+        let finalString = header + outputString.as_str();
+
+        println!("Num points: {}", numSolid * (samples + 1));
+
+        std::fs::write(OCTREE_OUTPUT_PCD_FILE, finalString).expect("Unable to write file");
     }
 
 }

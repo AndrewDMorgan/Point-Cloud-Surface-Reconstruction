@@ -1,7 +1,15 @@
 #include <iostream>
+#include <fstream>
+#include <string>
+#include <ranges>
+#include <vector>
+#include <sstream>
+
+#include <chrono>
 #include "matar.h"
 
 #include "marchingCubes.h"
+#include "octree.hpp"
 
 using namespace mtr;  // so I don't have to write mtr:: a thousand times per line
 
@@ -15,13 +23,13 @@ const bool LOADING_DISTANCE_FIELD_SAVE = false;
 const bool GENERATE_NEW_VERSION_SDF = true;
 const bool USING_OLD_SDF = true;
 
-const std::string FIELD_FILE = "tensioned_StandFordBunny_untensioned_workingFixed!.json";  // "tensioned_StandFordBunny_untensioned_test2.json"
-const std::string SAVE_FILE = "StanfordBunnyTestShrink.json";
-const bool SAVE_TENSIONED_JSON = false;
+//const std::string FIELD_FILE = "tensioned_StandFordBunny_untensioned_workingFixed!.json";  // "tensioned_StandFordBunny_untensioned_test2.json"
+//const std::string SAVE_FILE = "StanfordBunnyTestShrink.json";
+//const bool SAVE_TENSIONED_JSON = false;
 
-const std::string OBJ_SAVE_FILE = "StanfordBunnyTestShrink.obj";
+//const std::string OBJ_SAVE_FILE = "StanfordBunnyTestShrink.obj";
 
-const bool SHOW_PLOT = false;
+//const bool SHOW_PLOT = false;
 
 
 // bunny obj file (I transfered/reformatted it to a .pcd file)      35k points (so a fair bit considering it's in python and not paralyzed)
@@ -33,12 +41,12 @@ const std::string TENSION_IMAGES_SAVE_PATH = "ShrinkWrap4/";
 const bool SAVE_TENSION_IMAGES = false;
 
 // loading a pcd file
-const bool LOAD_PCD = false;
-const std::string PCD_FILE = "standfordBunny.pcd";  // "test2.pcd";  // "TestFile.pcd"  # 
+const bool LOAD_PCD = true;
+const std::string PCD_FILE = "dragon.pcd.ply";//"standfordBunny.pcd";  // "test2.pcd";  // "TestFile.pcd"  # 
 const double POINTS_LOADED_PERCENT = 100.0 / (100.0);
 
 // test generators for certain shapes for testing
-const bool GENERATE_HALLOW_SPHERE = true;  // fib sphere should be 30/68
+const bool GENERATE_HALLOW_SPHERE = false;  // fib sphere should be 30/68
 const bool GENERATE_SOLID_SPHERE = false;
 const bool GENERATE_CUBE = false;
 
@@ -46,6 +54,10 @@ const bool GENERATE_CUBE = false;
 
 // the level at which the surface is defined as solid instead of void
 double ISO_CONTOUR_LEVEL = 6.0;
+
+// octree setup settings
+const int OCTREE_POINT_BUFFER_SIZE = 25;
+const int MAX_OCTREE_DEPTH = 10;
 
 // as long as the chunk size equals this any points that can make the surface solid will be within the neighboring 27 cells
 double CHUNK_SIZE = ISO_CONTOUR_LEVEL;
@@ -55,7 +67,7 @@ const int POINT_CLOUD_SIZE = 50000;
 const int SURFACE_POINTS_BUFFER_SIZE = 250000;
 
 // the size and positioning of the calculated area
-const int SAMPLING_SPACE_SIZE[3] = {101, 101, 101};  //[101, 101, 101]  # [500, 500, 500]#
+const int SAMPLING_SPACE_SIZE[3] = {250, 250, 250};  //[101, 101, 101]  # [500, 500, 500]#
 double SAMPLING_SPACE_OFFSET[3] = {0, 0, 0};
 
 // the maximum fill depth (to avoid any infinite loops in the case of an error in the code, part, or input settings)
@@ -90,7 +102,7 @@ const double PI = 3.14159;
 //=========================================================================================================
 
 
-// utility functionsd
+// utility functions
 double Min (double v1, double v2)
 {
     if (v1 < v2) return v1;
@@ -429,9 +441,9 @@ ChunkGrid GenerateChunks (CArray <double> &points, double chunkSize, int numPoin
     largeBoundZ = std::ceil(largeBoundZ);
 
     // finding the grid size
-    int gridSizeX = (int) std::ceil(abs(largeBoundX - smallBoundX) / chunkSize) + 1;
-    int gridSizeY = (int) std::ceil(abs(largeBoundY - smallBoundY) / chunkSize) + 1;
-    int gridSizeZ = (int) std::ceil(abs(largeBoundZ - smallBoundZ) / chunkSize) + 1;
+    int gridSizeX = (int) std::ceil(abs(largeBoundX - smallBoundX) / chunkSize) + 9;
+    int gridSizeY = (int) std::ceil(abs(largeBoundY - smallBoundY) / chunkSize) + 9;
+    int gridSizeZ = (int) std::ceil(abs(largeBoundZ - smallBoundZ) / chunkSize) + 9;
 
     // creating the grid
     int bufferSize = gridSizeX * gridSizeY * gridSizeZ;  // the maximum number of possible points per chunk
@@ -685,7 +697,7 @@ int main()
     // loading or calculatiung the distance field
     if (LOADING_DISTANCE_FIELD_SAVE)
     {
-        // load file
+        //
     }
     else
     {
@@ -697,11 +709,54 @@ int main()
         // loading a pcd file
         if (LOAD_PCD)
         {
+            std::cout << "Read to load pcd" << std::endl;
             // add pcd file loading (too lazy, I'll do it later)
+            // load file
+            /*
+            0:  # .PCD v.5 - Point Cloud Data file format
+            1:  VERSION .5
+            2:  FIELDS x y z
+            3:  SIZE 4 4 4
+            4:  TYPE F F F
+            5:  COUNT 1 1 1
+            6:  WIDTH 35947
+            7:  HEIGHT 1
+            8:  POINTS 35947
+            9:  DATA ascii
+            10: -0.037830 0.127940 0.004475
+            */
+            std::string line;
+            std::ifstream myfile (PCD_FILE);
+            if (myfile.is_open())
+            {
+                //std::cout << "Valid file" << std::endl;
+                int index = 0;
+                while ( getline (myfile, line, '\n') )
+                {
+                    //std::cout << "Loading a line" << std::endl;
+                    if (index > 9) {
+                        int xyzIndex = 0;
+                        std::string numStr;
+                        std::stringstream lineStream (line);
+                        while(getline(lineStream, numStr, ' '))
+                        {
+                            //std::cout << "loading number: " << numStr << ": (" << index << ", " << xyzIndex << ") -> " << std::stod(numStr) << std::endl;
+                            pointCloud(pointCloudIndex, xyzIndex) = std::stod(numStr) * 250.;
+                            xyzIndex += 1;
+                        }
+                        //std::cout << "Number loaded: " << pointCloud(pointCloudIndex, 0) << ", " <<  pointCloud(pointCloudIndex, 1) << ", " <<  pointCloud(pointCloudIndex, 2) << std::endl;
+                        pointCloudIndex ++;
+                    }
+                    index += 1;
+                }
+                myfile.close();
+            } else {
+                std::cout << "NOOOOOO" << std::endl;
+            }
+            std::cout << "Num points after loading: " << pointCloudIndex << std::endl;
         }
         else
         {
-
             // temporary shape generators for testing
             if (GENERATE_HALLOW_SPHERE) {
                 FibonacciSphere(575, pointCloudIndex, pointCloud, 34, 50);
@@ -739,113 +794,224 @@ int main()
                     }
                 }
             }
-
-
-            // auto setting some of the parameters
-            if (AUTO_SET)
-            {
-                // to store the bounds of the point cloud
-                int lowestX = 999999999;
-                int lowestY = 999999999;
-                int lowestZ = 999999999;
-
-                int largestX = -999999999;
-                int largestY = -999999999;
-                int largestZ = -999999999;
-
-                // going through the point cloud and finding the bounds
-                for (int i = 0; i < pointCloudIndex; i++)
-                {
-                    // updating the lowest
-                    lowestX = Min(lowestX, pointCloud(i, 0));
-                    lowestY = Min(lowestY, pointCloud(i, 1));
-                    lowestZ = Min(lowestZ, pointCloud(i, 2));
-
-                    // updating the largest
-                    largestX = Max(largestX, pointCloud(i, 0));
-                    largestY = Max(largestY, pointCloud(i, 1));
-                    largestZ = Max(largestZ, pointCloud(i, 2));
-                }
-
-                // using the bounds to adjust the parameters to fit the object
-                double cloudSizeX = largestX - lowestX;
-                double cloudSizeY = largestY - lowestY;
-                double cloudSizeZ = largestZ - lowestZ;
-
-                // adding space around the object to the point cloud size and calculating other parameters
-                double newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
-                double newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
-                double newDeltaScaleZ = cloudSizeZ / SAMPLING_SPACE_SIZE[2];
-
-                double newIsoContourLevel = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3 * ISO_CONTOUR_LEVEL;
-                
-                // updating the cloud size
-                cloudSizeX += newIsoContourLevel * 4;
-                cloudSizeY += newIsoContourLevel * 4;
-                cloudSizeZ += newIsoContourLevel * 4;
-
-                // updating the grid offset and delta position scaling
-                double newGridOffsetX = lowestX - newIsoContourLevel * 2;
-                double newGridOffsetY = lowestY - newIsoContourLevel * 2;
-                double newGridOffsetZ = lowestZ - newIsoContourLevel * 2;
-
-                newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
-                newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
-                newDeltaScaleZ = cloudSizeZ / SAMPLING_SPACE_SIZE[2];
-
-                // calculating the new inverse delta scaling factors
-                INVERSE_DELTA_X = 1 / newDeltaScaleX;
-                INVERSE_DELTA_Y = 1 / newDeltaScaleY;
-                INVERSE_DELTA_Z = 1 / newDeltaScaleZ;
-
-                // updating the Iso contour level and chunk size
-                double dAvg = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3;
-                ISO_CONTOUR_LEVEL *= dAvg;
-
-                CHUNK_SIZE *= dAvg;
-
-                // updating the offset
-                SAMPLING_SPACE_OFFSET[0] = newGridOffsetX;
-                SAMPLING_SPACE_OFFSET[1] = newGridOffsetY;
-                SAMPLING_SPACE_OFFSET[2] = newGridOffsetZ;
-
-                std::cout << "sampling offset: " << SAMPLING_SPACE_OFFSET[0] << ", " << SAMPLING_SPACE_OFFSET[1] << ", " << SAMPLING_SPACE_OFFSET[2] << "\nIso: " << ISO_CONTOUR_LEVEL << "     deltas: " << 1/INVERSE_DELTA_X << ", " << 1/INVERSE_DELTA_Y << ", " << 1/INVERSE_DELTA_Z << "\nCloud size: " << cloudSizeX << ", " << cloudSizeY << ", " << cloudSizeZ << std::endl;
-                std::cout << "lowest: " << lowestX << ", " << lowestY << ", " << lowestZ << "\nHighest: " << largestX << ", " << largestY << ", " << largestZ << std::endl;
-                std::cout << "Chunk size: " << CHUNK_SIZE << std::endl;
-            }
-
-
-            // generating a new distance function
-            
-            // putting all the points of the point cloud into chunks
-            ChunkGrid chunkGrid = GenerateChunks(pointCloud, CHUNK_SIZE, pointCloudIndex);
-
-            std::cout << "chunked point cloud" << std::endl;
-
-            // looping through all points and finding the point that is nearest to the cell
-            for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0]; x_++)
-            {
-                for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1]; y_++)
-                {
-                    for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2]; z_++)
-                    {
-                        // getting the global position of the point
-                        double x = (double) x_ / INVERSE_DELTA_X + SAMPLING_SPACE_OFFSET[0];
-                        double y = (double) y_ / INVERSE_DELTA_Y + SAMPLING_SPACE_OFFSET[1];
-                        double z = (double) z_ / INVERSE_DELTA_Z + SAMPLING_SPACE_OFFSET[2];
-
-                        // getting the nearest position to the point
-                        double distance = chunkGrid.FindNearestPoint(x, y, z);
-                        distanceField(x_, y_, z_) = distance;
-                    }
-                }
-            }
-            
-            std::cout << "found all distances" << std::endl;
-
-            // save the distance field (too lazy, add later)
         }
 
+        std::cout << "Num points before auto: " << pointCloudIndex << std::endl;
+
+        // auto setting some of the parameters
+        double samplingSpaceX = SAMPLING_SPACE_SIZE[0];
+        double samplingSpaceY = SAMPLING_SPACE_SIZE[1];
+        double samplingSpaceZ = SAMPLING_SPACE_SIZE[2];
+        if (AUTO_SET)
+        {
+            // to store the bounds of the point cloud
+            double lowestX = 999999999.0;
+            double lowestY = 999999999.0;
+            double lowestZ = 999999999.0;
+
+            double largestX = -999999999.0;
+            double largestY = -999999999.0;
+            double largestZ = -999999999.0;
+
+            // going through the point cloud and finding the bounds
+            for (int i = 0; i < pointCloudIndex; i++)
+            {
+                // updating the lowest
+                lowestX = std::min <double> (lowestX, pointCloud(i, 0));
+                lowestY = std::min <double> (lowestY, pointCloud(i, 1));
+                lowestZ = std::min <double> (lowestZ, pointCloud(i, 2));
+
+                // updating the largest
+                largestX = std::max <double> (largestX, pointCloud(i, 0));
+                largestY = std::max <double> (largestY, pointCloud(i, 1));
+                largestZ = std::max <double> (largestZ, pointCloud(i, 2));
+            }
+
+            // using the bounds to adjust the parameters to fit the object
+            double cloudSizeX = largestX - lowestX;
+            double cloudSizeY = largestY - lowestY;
+            double cloudSizeZ = largestZ - lowestZ;
+
+            // adding space around the object to the point cloud size and calculating other parameters
+            double newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
+            double newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
+            double newDeltaScaleZ = cloudSizeZ / SAMPLING_SPACE_SIZE[2];
+
+            double newIsoContourLevel = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3 * ISO_CONTOUR_LEVEL;
+            
+            // updating the cloud size
+            cloudSizeX += newIsoContourLevel * 4;
+            cloudSizeY += newIsoContourLevel * 4;
+            cloudSizeZ += newIsoContourLevel * 4;
+
+            // updating the grid offset and delta position scaling
+            double newGridOffsetX = lowestX - newIsoContourLevel * 2;
+            double newGridOffsetY = lowestY - newIsoContourLevel * 2;
+            double newGridOffsetZ = lowestZ - newIsoContourLevel * 2;
+
+            newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
+            newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
+            newDeltaScaleZ = cloudSizeZ / SAMPLING_SPACE_SIZE[2];
+
+            // calculating the new inverse delta scaling factors
+            INVERSE_DELTA_X = 1 / newDeltaScaleX;
+            INVERSE_DELTA_Y = 1 / newDeltaScaleY;
+            INVERSE_DELTA_Z = 1 / newDeltaScaleZ;
+
+            // updating the Iso contour level and chunk size
+            double dAvg = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3;
+            ISO_CONTOUR_LEVEL *= dAvg;
+
+            CHUNK_SIZE *= dAvg;
+
+            // updating the offset
+            SAMPLING_SPACE_OFFSET[0] = newGridOffsetX;
+            SAMPLING_SPACE_OFFSET[1] = newGridOffsetY;
+            SAMPLING_SPACE_OFFSET[2] = newGridOffsetZ;
+
+            // updating the bounding box size information
+            samplingSpaceX = cloudSizeX;
+            samplingSpaceY = cloudSizeY;
+            samplingSpaceZ = cloudSizeZ;
+
+            std::cout << "sampling offset: " << SAMPLING_SPACE_OFFSET[0] << ", " << SAMPLING_SPACE_OFFSET[1] << ", " << SAMPLING_SPACE_OFFSET[2] << "\nIso: " << ISO_CONTOUR_LEVEL << "     deltas: " << 1/INVERSE_DELTA_X << ", " << 1/INVERSE_DELTA_Y << ", " << 1/INVERSE_DELTA_Z << "\nCloud size: " << cloudSizeX << ", " << cloudSizeY << ", " << cloudSizeZ << std::endl;
+            std::cout << "lowest: " << lowestX << ", " << lowestY << ", " << lowestZ << "\nHighest: " << largestX << ", " << largestY << ", " << largestZ << std::endl;
+            std::cout << "Chunk size: " << CHUNK_SIZE << std::endl;
+
+
+
+            //Octree octree = Octree(pointCloud, pointCloudIndex, cloudSizeX, cloudSizeY, cloudSizeZ, SAMPLING_SPACE_OFFSET[0], SAMPLING_SPACE_OFFSET[1], SAMPLING_SPACE_OFFSET[2], 10, 25);
+            //octree.SubDivide();  // somehow this is all working
+
+
+            /*    test code
+            double testX = pointCloud(7, 0);
+            double testY = pointCloud(7, 1);
+            double testZ = pointCloud(7, 2);
+            std::cout << "test pos: " << testX << ", " << testY << ", " << testZ << std::endl;
+            int node = octree.GetLeafIndex(testX, testY, testZ);  // not sure if it's finding the points alright or not?
+            std::cout << "node: " << node << std::endl;
+            int pointIndex = octree.positionIndexesPlusOne(node, 0);
+            std::cout << "point index: " << pointIndex << "        total points: " << pointCloudIndex << std::endl;
+            std::cout << "num poses: " << octree.numPositionIndexs(node) << std::endl;
+            octree.points(pointIndex, 0);
+            std::cout << "leaf node index: " << node << std::endl;
+            double nodePointX = octree.GetNodePointX(node, 0);
+            double nodePointY = octree.GetNodePointY(node, 0);
+            double nodePointZ = octree.GetNodePointZ(node, 0);
+
+            std::cout << "node point: " << nodePointX << ", " << nodePointY << ", " << nodePointZ << std::endl;*/
+
+        }
+
+
+        // generating a new distance function
+        
+        // putting all the points of the point cloud into chunks
+        ChunkGrid chunkGrid = GenerateChunks(pointCloud, CHUNK_SIZE, pointCloudIndex);
+
+        // creating the octree for the data
+        /*Octree::Octree pointCloudOctree = Octree::Octree (pointCloud, pointCloudIndex, samplingSpaceX, samplingSpaceY, samplingSpaceZ, SAMPLING_SPACE_OFFSET[0], SAMPLING_SPACE_OFFSET[1], SAMPLING_SPACE_OFFSET[2], MAX_OCTREE_DEPTH, OCTREE_POINT_BUFFER_SIZE, 0.05);
+        pointCloudOctree.SubDivide();  // sorting all the point cloud points into the octree and generating the various nodes
+
+        // generating the traversal table
+        std::cout << "creating traversal table cache" << std::endl;
+
+        pointCloudOctree.GenerateNodeReferenceChache();  // IT SEEMS TO WORK!!!!!!!
+
+        std::cout << "created traversal table cache" << std::endl;
+
+        CArray <double> distanceFieldOctree = CArray <double> (pointCloudOctree.GetSize());
+        
+        const CArray <double> pos = pointCloudOctree.GetLeafNodePosition(pointCloudOctree.GetLeafIndex(23.456, 75.346, 14.3456));//25.3467, 28.0, 36.2356));
+
+        // make the code return the min distance if the queue runs out
+        //std::cout << pointCloudOctree.NearestNeighborSearch           (7.970978545547169, 31.27784731879688, 7.970978545547169) << std::endl;  // pos(0), pos(1), pos(2)
+        std::cout << pointCloudOctree.ApproximateNearestNeighborSearch(7.970978545547169, 31.27784731879688, 7.970978545547169) << std::endl;  // pos(0), pos(1), pos(2)  // seems to work fine for node positions, so it might work fine for this application, although the error should be figured out
+        std::cout << chunkGrid.       FindNearestPoint                (7.970978545547169, 31.27784731879688, 7.970978545547169) << std::endl;  // pos(0), pos(1), pos(2)
+        */
+        // something weird is happening. It works fine above, but once run multiple times below it crashes by the queue running dry. What could cause this discrepancy?
+        // cache is almost correct I think, it works at the bounds, although it is still a bit off in those areas, not sure why
+
+        /*
+        auto t1 = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 1000000; i++) {pointCloudOctree.NearestNeighborSearch(pos(0), pos(1), pos(2));}
+        auto t2 = std::chrono::high_resolution_clock::now();
+        auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+        std::chrono::duration <double, std::milli> ms_double = t2 - t1;
+        std::cout << ms_double.count() << "ms\n";
+
+        t1 = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 1000000; i++) {pointCloudOctree.ApproximateNearestNeighborSearch(pos(0), pos(1), pos(2));}
+        t2 = std::chrono::high_resolution_clock::now();
+        ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+        ms_double = t2 - t1;
+        std::cout << ms_double.count() << "ms\n";
+
+        t1 = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 1000000; i++) {chunkGrid.FindNearestPoint(pos(0), pos(1), pos(2));}
+        t2 = std::chrono::high_resolution_clock::now();
+        ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+        ms_double = t2 - t1;
+        std::cout << ms_double.count() << "ms\n";*/
+
+
+        // the cached neighbors might be broken at the very edges of the bounds of the octree
+        // it may need to ascend all the way to the root node, allow it to go heigher
+        // the cache seems to be fixed after going to depth = 0 although the edges still crash and have an issue
+
+
+        /*double px = -100;//pointCloud(25, 0) - 2;
+        double py = -100;//pointCloud(25, 1) + 3;
+        double pz = -100;//pointCloud(25, 2) + 7;
+
+        std::cout << "nearest point cloud search: " << pointCloudOctree.NearestNeighborSearch(px, py, pz) << std::endl;
+        std::cout << "nearest spatial partition search: " << chunkGrid.FindNearestPoint(px, py, pz) << std::endl;*/
+
+        /*std::time_t start, end;
+        std::time(&start);
+        for (int i = 0; i < 1000000; i++) pointCloudOctree.NearestNeighborSearch(px, py, pz);
+        std::time(&end);
+        std::cout <<  double(end-start) << "       " << pointCloudOctree.NearestNeighborSearch(px, py, pz) << std::endl;*/
+
+        /*std::time(&start);
+        for (int i = 0; i < 1000000; i++) chunkGrid.FindNearestPoint(px, py, pz);
+        std::time(&end);
+        std::cout <<  double(end-start) << "       " << chunkGrid.FindNearestPoint(px, py, pz) << std::endl;*/
+
+        std::cout << "chunked point cloud" << std::endl;
+
+        // looping through all points and finding the point that is nearest to the cell
+        for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0]; x_++)
+        {
+            for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1]; y_++)
+            {
+                for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2]; z_++)
+                {
+                    // getting the global position of the point
+                    double x = (double) x_ / INVERSE_DELTA_X + SAMPLING_SPACE_OFFSET[0];
+                    double y = (double) y_ / INVERSE_DELTA_Y + SAMPLING_SPACE_OFFSET[1];
+                    double z = (double) z_ / INVERSE_DELTA_Z + SAMPLING_SPACE_OFFSET[2];
+
+                    // getting the nearest position to the point
+                    double distance = chunkGrid.FindNearestPoint(x, y, z);  // pointCloudOctree.NearestNeighborSearch(x, y, z);//
+
+                    //std::cout << "ready to start neighbor search..." << std::endl;
+                    //double pointDst = pointCloudOctree.ApproximateNearestNeighborSearch(x, y, z);  // ???????
+                    //std::cout << "searched neighbor" << std::endl;
+                    /*if (chunkGrid.FindNearestPoint(x, y, z) != pointDst)
+                    {
+                        //std::cout << "octree nns failed: \n    x, y, z: " << x << ", " << y << ", " << z << "\n    Octree Distance: " << pointCloudOctree.ApproximateNearestNeighborSearch(x, y, z) << "\n    Spatial Distance: " << distance << std::endl;
+                    }*/
+
+                    distanceField(x_, y_, z_) = distance;
+                }
+            }
+        }
+        
+        std::cout << "found all distances" << std::endl;
+
+        // save the distance field (too lazy, add later)
 
         // correct old sdf's to work with the generation of the new ones
         if (USING_OLD_SDF)
@@ -919,6 +1085,10 @@ int main()
             // sorting the points into chunks
             ChunkGrid chunkedSurfacePoints = GenerateChunks(surfacePoints, SHELL_CHUNK_SIZE, surfaceIndex);
 
+            // creating the octree for the data
+            //Octree::Octree surfaceOctree = Octree::Octree (surfacePoints, surfaceIndex, SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2], SAMPLING_SPACE_OFFSET[0], SAMPLING_SPACE_OFFSET[1], SAMPLING_SPACE_OFFSET[2], MAX_OCTREE_DEPTH, OCTREE_POINT_BUFFER_SIZE, 0.2);
+            //surfaceOctree.SubDivide();  // sorting all the point cloud points into the octree and generating the various cells
+
             std::cout << "chunked the surface points" << std::endl;
 
             // correcting the iso contour sense the grid spacing has changed for this next step
@@ -936,7 +1106,7 @@ int main()
                     for (int z = 0; z < SAMPLING_SPACE_SIZE[2]; z++)
                     {
                         // finding the distance to the nearest point
-                        double distance = chunkedSurfacePoints.FindNearestPoint(x, y, z);
+                        double distance = chunkedSurfacePoints.FindNearestPoint(x, y, z);  // surfaceOctree.NearestNeighborSearch(x, y, z);//
 
                         // finding the correct sign for the current position
                         short sign = signedGrid(x, y, z);
@@ -987,7 +1157,7 @@ int main()
 
 
     // running the code through marching cubes & returning it as an stl file
-    MarchingCubesToSTL(distanceField, ISO_CONTOUR_LEVEL, 1.0/INVERSE_DELTA_X, 1.0/INVERSE_DELTA_Y, 1.0/INVERSE_DELTA_Z);
+    MarchingCubes::MarchingCubesToSTL(distanceField, ISO_CONTOUR_LEVEL, 1.0, 1.0, 1.0);  // 1.0/INVERSE_DELTA_X, 1.0/INVERSE_DELTA_Y, 1.0/INVERSE_DELTA_Z (the distance field at this point has a scale represent 1x1x1 cells)
 
 
     return 0;

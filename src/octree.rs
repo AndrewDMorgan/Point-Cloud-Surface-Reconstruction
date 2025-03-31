@@ -1,22 +1,23 @@
 #![allow(non_snake_case)]
 
 // some of the methods aren't being used,
-// but are implimented as they may be usefull
-// in future projects
+// but are implemented as they may be useful
+// in future projects or other inclusions
+// of the octree data structure
 #![allow(dead_code)]
 
 use crate::priorityQueue;
 
-const MAX_BINARY_SEATCH_ITTERATIONS: isize = 250;
+const MAX_BINARY_SEARCH_ITERATIONS: isize = 10000;
 
 
-pub fn BinarySearch (points: &Vec <usize>, searchValue: &usize) -> Option <usize> {
+pub fn BinarySearch <T: Eq + std::cmp::PartialOrd> (points: &Vec <T>, searchValue: &T) -> Option <usize> {
     let mut currentIndex: usize = 0;
     let mut dividedSize = points.len();
 
     let mut halfWidth: usize;
     // edit this?
-    for _i in 0..MAX_BINARY_SEATCH_ITTERATIONS {
+    for _i in 0..MAX_BINARY_SEARCH_ITERATIONS {
         halfWidth = dividedSize / 2;
         dividedSize -= halfWidth;
 
@@ -78,11 +79,11 @@ pub struct Octree {
     depthSizeScalars: Vec <f64>,
     depthIndexBufferSearch: Vec <usize>,
     lastLeafDepth: usize,
-    cellNeighborRefferences: Vec <Vec <usize>>,
+    cellNeighborReferences: Vec <Vec <usize>>,
     leafNodes: Vec <usize>,
 
     // corner references...    using morton codes floor((pos - minTreeBoundingPos) / smallestCellSize)
-    pub cornerPoints: std::collections::HashMap <u128, (f64, f64, f64)>,
+    cornerPoints: std::collections::HashMap <u128, (f64, f64, f64)>,
     
     // the indexes in the corner points hash-map
     // a hash-map is needed to allow for checking
@@ -120,19 +121,37 @@ impl Octree {
             },
             depthIndexBufferSearch: vec!(),
             lastLeafDepth: 0,
-            cellNeighborRefferences: vec!(),
+            cellNeighborReferences: vec!(),
             leafNodes: vec!(),
             cornerPoints: std::collections::HashMap::new(),
-            nodeCornerReferences: vec!(),  // one for every cell (representing it's 8 corners)
+            nodeCornerReferences: vec!(),  // one for every cell (representing its 8 corners)
         }
     }
 
 
 
+    pub fn GetCornerPointReferences (&self, leafNode: usize) -> Vec <u128> {
+        self.nodeCornerReferences[
+            self.GetLeafNodeReverseIndex(leafNode)
+        ].clone()
+    }
+
+    pub fn GetCornerPointKeys (&self) -> Vec <u128> {
+        let mut keys: Vec <u128> = vec!();
+        for corner in self.cornerPoints.keys() {
+            keys.push(*corner);
+        } keys
+    }
+
+    pub fn LookupCornerPoint (&self, id: u128) -> (f64, f64, f64) {
+        *self.cornerPoints.get(&id).
+            expect("Failed to gather corner point")
+    }
 
 
-    // TEMP remove once debuged
-    pub fn GetAllNeighborConersTemp (&self, leafNode: usize) -> Vec <(f64, f64, f64)> {
+
+    // TEMP remove once debugged
+    pub fn GetAllNeighborCornersTemp(&self, leafNode: usize) -> Vec <(f64, f64, f64)> {
         let leafIndex = self.GetLeafNodeReverseIndex(leafNode);
         let mut points: Vec <(f64, f64, f64)> = vec!();
 
@@ -142,8 +161,8 @@ impl Octree {
             );
         }
 
-        println!(": {}", self.cellNeighborRefferences[leafNode].len());
-        for neighborIndex in &self.cellNeighborRefferences[leafNode] {
+        println!(": {}", self.cellNeighborReferences[leafNode].len());
+        for neighborIndex in &self.cellNeighborReferences[leafNode] {
             for cornerCode in &self.nodeCornerReferences[
                 self.GetLeafNodeReverseIndex(*neighborIndex)
             ] {
@@ -161,17 +180,23 @@ impl Octree {
 
 
     fn GetCornerMortonCode (&self, posX: f64, posY: f64, posZ: f64) -> u128 {
-        // getting the intager position for the morton code
+        // getting the integer position for the morton code
         // floor((pos - minTreeBoundingPos) / smallestCellSize)
         // is the tiny offset needed to prevent float point errors?
-        let x = ((posX - self.offsetX) / self.depthSizeScalars[self.maxDepth]) as u32;
-        let y = ((posY - self.offsetY) / self.depthSizeScalars[self.maxDepth]) as u32;
-        let z = ((posZ - self.offsetZ) / self.depthSizeScalars[self.maxDepth]) as u32;
+
+        // 1, 0.5, 0.25, 0.125       1/2^x    1/1  1/2  1/4  1/8
+        // any smaller unit should allow bigger units to fit in correctly so that should be fine
+        // offset them by half a unit to ensure floating point errors don't add up....
+        // that didn't help..........
+
+        let x = ((posX - self.offsetX + self.sizeX*self.depthSizeScalars[self.maxDepth]*0.5) / self.depthSizeScalars[self.maxDepth]) as u32;
+        let y = ((posY - self.offsetY + self.sizeX*self.depthSizeScalars[self.maxDepth]*0.5) / self.depthSizeScalars[self.maxDepth]) as u32;
+        let z = ((posZ - self.offsetZ + self.sizeX*self.depthSizeScalars[self.maxDepth]*0.5) / self.depthSizeScalars[self.maxDepth]) as u32;
 
         self.GetMortonCode(x, y, z)
     }
 
-    pub fn GenerateCornerPointsChache (&mut self) -> usize{
+    pub fn GenerateCornerPointsCache(&mut self) -> usize{
         let mut totalCornerPoints = 0usize;
 
         let mut mortonCode: u128;
@@ -272,7 +297,7 @@ impl Octree {
             }
 
             // returning the node index
-            self.cellNeighborRefferences.push(vec!());
+            self.cellNeighborReferences.push(vec!());
             return self.childPointReferences.len() - 1;
         }
 
@@ -300,7 +325,7 @@ impl Octree {
             self.childPointReferences.push([ None; 8 ]);
 
             self.positionIndexes.push(vec!());
-            self.cellNeighborRefferences.push(vec!());
+            self.cellNeighborReferences.push(vec!());
 
             return self.childPointReferences.len() - 1;
         }
@@ -318,7 +343,7 @@ impl Octree {
             self.positionIndexes.push(vec![
                 lastIndex.expect("Failed to find point")
             ]);
-            self.cellNeighborRefferences.push(vec!());
+            self.cellNeighborReferences.push(vec!());
 
             return self.childPointReferences.len() - 1;
         }
@@ -342,13 +367,13 @@ impl Octree {
             newPosition.1 + nodeSize.1 * 0.5,
             newPosition.2 + nodeSize.2 * 0.5
         ));
-        self.cellNeighborRefferences.push(vec!());
+        self.cellNeighborReferences.push(vec!());
 
         self.childPointReferences.len() - 1
     }
 
     
-    pub fn GenerateNodeReferenceChache (&mut self) {
+    pub fn GenerateNodeReferenceCache(&mut self) {
         self.NodeReferenceCacheRecursiveAscent(0, self.rootNodeReferenceIndex);
     }
     
@@ -584,42 +609,23 @@ impl Octree {
                        ((cellPosition.2 - cellSize.2*0.5 < pos.2 + size.2 && cellPosition.2 + cellSize.2*0.5 > pos.2) ||
                         (pos.2 < cellPosition.2 + cellSize.2*0.5 && pos.2 + size.2 > cellPosition.2 - cellSize.2*0.5)
                     ) {
-                        self.cellNeighborRefferences[self.depthIndexBufferSearch[depth]].
+                        self.cellNeighborReferences[self.depthIndexBufferSearch[depth]].
                                 push(childIndex);
                     }
                     return;
                 }
 
-                // checking the position (again, finding child's faces fault)
-                let widthScalar = self.depthSizeScalars[currentDepth + 1];
-                let cellSize = (
-                    self.sizeX * widthScalar,
-                    self.sizeY * widthScalar,
-                    self.sizeZ * widthScalar,
+                self.GetChildFaceNodesRecursive(
+                    depth,
+                    newChildIndex.unwrap(),
+                    shift,
+                    axis,
+                    indexI,
+                    indexJ,
+                    currentDepth + 1,
+                    pos,
+                    size
                 );
-                let cellPosition = self.GetNodePosition(newChildIndex.unwrap());
-                    // left edge is before right edge                   right edge is beyond left edge
-                if true || (cellPosition.0 - cellSize.0*0.5 < pos.0 + size.0 && cellPosition.0 + cellSize.0*0.5 > pos.0 &&
-                    cellPosition.1 - cellSize.1*0.5 < pos.1 + size.1 && cellPosition.1 + cellSize.1*0.5 > pos.1 &&
-                    cellPosition.2 - cellSize.2*0.5 < pos.2 + size.2 && cellPosition.2 + cellSize.2*0.5 > pos.2) ||
-
-                    // right edge is beyond left edge                   right edge is beyond left edge
-                   (pos.0 < cellPosition.0 + cellSize.0*0.5 && pos.0 + size.0 > cellPosition.0 - cellSize.0*0.5 &&
-                    pos.1 < cellPosition.1 + cellSize.1*0.5 && pos.1 + size.1 > cellPosition.1 - cellSize.1*0.5 &&
-                    pos.2 < cellPosition.2 + cellSize.2*0.5 && pos.2 + size.2 > cellPosition.2 - cellSize.2*0.5) {
-                    
-                    self.GetChildFaceNodesRecursive(
-                        depth,
-                        newChildIndex.unwrap(),
-                        shift,
-                        axis,
-                        indexI,
-                        indexJ,
-                        currentDepth + 1,
-                        pos,
-                        size
-                    );
-                }
             }
         }
     }
@@ -627,7 +633,7 @@ impl Octree {
 
     pub fn GetLeafIndex (&mut self, inputPos: &(f64, f64, f64)) -> usize {
         let pos = (
-            // magic number is for percision to prevent errors at the far extremes
+            // magic number is for precision to prevent errors at the far extremes
             inputPos.0.max(self.offsetX).min(self.sizeX + self.offsetX - 0.00001),
             inputPos.1.max(self.offsetY).min(self.sizeY + self.offsetY - 0.00001),
             inputPos.2.max(self.offsetZ).min(self.sizeZ + self.offsetZ - 0.00001),
@@ -652,7 +658,7 @@ impl Octree {
         for i in 1..=self.maxDepth {
             self.lastLeafDepth = i;
 
-            widthScalar = self.depthSizeScalars[i];
+            widthScalar = self.depthSizeScalars[i];  // is this right?????? -1 or no -1?????
             nodeSize = (
                 self.sizeX * widthScalar,
                 self.sizeY * widthScalar,
@@ -664,6 +670,8 @@ impl Octree {
                 ((pos.1 - base.1) / nodeSize.1) as usize,
                 ((pos.2 - base.2) / nodeSize.2) as usize,
             );
+
+            //println!("({}) Offset: {}, {}, {}    Pos: {}, {}, {}    Base: {}, {}, {}    Size: {}, {}, {}", i, childOffset.0, childOffset.1, childOffset.2, pos.0, pos.1, pos.2, base.0, base.1, base.2, nodeSize.0, nodeSize.1, nodeSize.2);
 
             childIndex = *CHILD_OFFSET_ORDER_INDEX.get(&[childOffset.0, childOffset.1, childOffset.2]).
                 expect("Invalid offset");
@@ -729,7 +737,11 @@ impl Octree {
             std::collections::HashMap::new();
         visited.insert(leafNodeIndex, true);
 
+        //let mut numSeen = 1;
+        //let mut numPopped = 0;
+
         while !queue.IsEmpty() {
+            //numPopped += 1;
             // the queue has to not be empty to get here
             currentNode = queue.Pop().unwrap();
 
@@ -749,6 +761,7 @@ impl Octree {
                          (currentNode.0 * nodeWidth).sqrt();
             
             if minNodeDst >= minDst {
+                //println!("Seen: {}", numSeen);
                 return Some(minDst.sqrt())
             }
 
@@ -760,7 +773,7 @@ impl Octree {
                 minDst = minDst.min(distance);
             }
 
-            for neighborIndex in &self.cellNeighborRefferences[currentNode.1] {
+            for neighborIndex in &self.cellNeighborReferences[currentNode.1] {
                 if visited.contains_key(neighborIndex) {
                     continue;
                 }
@@ -770,14 +783,36 @@ impl Octree {
                     queryPoint
                 );
 
-                // ===================================================================================================
-                //                                  Add a distance check to cull bad options early
-                // ===================================================================================================
+                // hopefully this isn't broken and works. Should speed up the program bc/ the math
+                // I'd think is much quicker than the insertion algorithm
+                /*depthScalar = self.depthSizeScalars[
+                self.leafNodeDepths[*neighborIndex]
+                    .expect("Not a leaf node")];
+                nodeWidthXYZ = (
+                    self.sizeX * depthScalar,
+                    self.sizeY * depthScalar,
+                    self.sizeZ * depthScalar
+                );
+                nodeWidth = nodeWidthXYZ.0*nodeWidthXYZ.0 +
+                            nodeWidthXYZ.1*nodeWidthXYZ.1 +
+                            nodeWidthXYZ.2*nodeWidthXYZ.2;
+                
+                minNodeDst = distance + nodeWidth * 0.25 -
+                            (distance * nodeWidth).sqrt();
+                
+                if minNodeDst < minDst || true {  // remove || true  once I know if it works or not
+                    queue.Push((
+                        distance, *neighborIndex
+                    ));
+                }// */
+                //numSeen += 1;
                 queue.Push((
                     distance, *neighborIndex
                 ));
             }
         }
+
+        //println!("Ran out; Seen: {}      MD: {}      Popped: {}", numSeen, minDst.sqrt(), numPopped);
 
         Some(minDst.sqrt())
         //None    ig it can actually end up searching every node.....
@@ -786,6 +821,16 @@ impl Octree {
 
     pub fn GetLeafNodes (&self) -> Vec <usize> {
         self.leafNodes.clone()
+    }
+
+    pub fn GetCornerPositionIndex (&self, leafNodeIndex: usize, cornerIndex: usize) -> usize {
+        // not sure if the keys are in order; if so use a binary search for better performance
+        let mortonCode = self.nodeCornerReferences[leafNodeIndex][cornerIndex];
+        for (i, key) in self.cornerPoints.keys().enumerate() {
+            if *key == mortonCode {
+                return i;
+            }
+        } 0  // error?  shouldn't ever reach here? I give up...  :(
     }
 
     pub fn GetNodePosition (&self, nodeIndex: usize) -> (f64, f64, f64) {
@@ -797,19 +842,49 @@ impl Octree {
     }
 
     pub fn GetLeafNodeReverseIndex (&self, leafNode: usize) -> usize {
-        BinarySearch(&self.leafNodes, &leafNode).
-            expect("Failed to get point")
+        self.leafNodes.binary_search(&leafNode).expect("failed to get the point")
+        /*BinarySearch(&self.leafNodes, &leafNode).  // not sure if this is working?
+            expect("Failed to get point")*/
     }
 
     // does this need to be public?
-    pub fn GetMortonCode (&self, x: u32, y: u32, z: u32) -> u128 {
+    pub fn GetMortonCode (&self, xi: u32, yi: u32, zi: u32) -> u128 {
         // getting the morton code
-        let mut mortonCode: u128 = 0;
+        let mut x = xi;
+        let mut y = yi;
+        let mut z = zi;
+        
+        // Interleave x bits (starting from the least significant bits)
+        x = (x | (x << 16)) & 0x030000FF;
+        x = (x | (x << 8)) & 0x0300F00F;
+        x = (x | (x << 4)) & 0x030C30C3;
+        x = (x | (x << 2)) & 0x09249249;
+        
+        // Interleave y bits (shifted by 1 bit to align with interleaving of x)
+        y = (y | (y << 16)) & 0x030000FF;
+        y = (y | (y << 8)) & 0x0300F00F;
+        y = (y | (y << 4)) & 0x030C30C3;
+        y = (y | (y << 2)) & 0x09249249;
+        
+        // Interleave z bits (shifted by 2 bits to align with interleaving of x)
+        z = (z | (z << 16)) & 0x030000FF;
+        z = (z | (z << 8)) & 0x0300F00F;
+        z = (z | (z << 4)) & 0x030C30C3;
+        z = (z | (z << 2)) & 0x09249249;
+        
+        // Combine the interleaved bits of x, y, and z
+        (x as u128) | ((y as u128) << 1) | ((z as u128) << 2)
+        /*let mut mortonCode: u128 = 0;
         for i in 0..32 {  // 64-bit integer
-            mortonCode |= (((x >> i) & 1) as u128) << (3 * i);
+            mortonCode |= (((xi >> i) & 1) as u128) << (3 * i);
             mortonCode |= (((y >> i) & 1) as u128) << (3 * i + 1);
             mortonCode |= (((z >> i) & 1) as u128) << (3 * i + 2);
-        } mortonCode
+        } mortonCode*/
+    }
+
+    // has to clone them sadly.... (not sure how else to do it)
+    pub fn GetNodeNeighbors (&self, nodeIndex: usize) -> Vec <usize> {
+        self.cellNeighborReferences[nodeIndex].clone()
     }
 
 }

@@ -62,6 +62,12 @@ impl MinHeapBinaryTree {
     pub fn Push (&mut self, value: (f64, usize)) {
         // gather the ne index for the node
         if let Some((parent, depth)) = self.incompleteNodes.pop() {
+            if parent.is_none() && self.incompleteNodes.len() > 0 {
+                // it wasn't the root node but rather an invalidated one; continuing the search for a valid incomplete node
+                self.Push(value);
+                return;
+            }
+
             // getting the node
             let mut newNode = Node {
                 leftChild: None,
@@ -157,9 +163,9 @@ impl MinHeapBinaryTree {
         // find a leaf node
         // take that leaf node, pop it off,
         // place that leaf node at the root replacing the current root
-        // swap the root node down until it satisifes the rules
+        // swap the root node down until it satisfies the rules
 
-        // getting the leaf node, and then finding the next next leaf node
+        // getting the leaf node, and then finding the next leaf node
         // does this work, or is this completely flawed??   (from basic testing it seems true? none of them ever had a child)
         let initialValue = Some(self.childReferences[0].value);
         if let Some(node) = self.childReferences.pop() {
@@ -175,10 +181,9 @@ impl MinHeapBinaryTree {
                     self.childReferences[parent].incompleteNodeRight = Some(self.incompleteNodes.len());
                 }
 
-                // is this correct? it should be push the parent right? not the root?
+                // is this correct? it should be push the parent right? not the root?     seems to work.....
                 self.incompleteNodes.push((Some(parent), node.depth));
             } else {
-                // removing the root node
                 self.childReferences.clear();
                 self.incompleteNodes = vec![(None, 0)];
                 self.numberOfNodes = 0;
@@ -195,7 +200,8 @@ impl MinHeapBinaryTree {
             } else {
                 if let Some(index) = node.incompleteNodeLeft {
                     self.incompleteNodes[index] = (None, 0);
-                } if let Some(index) = node.incompleteNodeRight {
+                }
+                if let Some(index) = node.incompleteNodeRight {
                     self.incompleteNodes[index] = (None, 0);
                 }
             }
@@ -231,7 +237,7 @@ impl MinHeapBinaryTree {
             }
         }
 
-        None  // no valid nodes to be retreaved
+        None  // no valid nodes to be retrieved
     }
 
 
