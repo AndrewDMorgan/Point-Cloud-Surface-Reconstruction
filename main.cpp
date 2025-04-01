@@ -53,7 +53,7 @@ const bool GENERATE_CUBE = false;
 // https://people.math.sc.edu/Burkardt/data/pcd/p213.pcd: TestFile.pcd
 
 // the level at which the surface is defined as solid instead of void
-double ISO_CONTOUR_LEVEL = 6.0;
+double ISO_CONTOUR_LEVEL = 3.5;
 
 // octree setup settings
 const int OCTREE_POINT_BUFFER_SIZE = 25;
@@ -74,9 +74,9 @@ double SAMPLING_SPACE_OFFSET[3] = {0, 0, 0};
 const int MAX_FILL_DEPTH = 100000000;  // 100 million. Hopefully that's not too little, the grids can get fairly large
 
 // the number of iterations of surface tension to smooth out the surface (the more the better the surface)
-const bool SIMULATING_SURFACE_TENSION = false;
-const int TENSION_ITTERATIONS = 2500;
-const double VELOCITY = 0.75;  // constant velocity with respect to the gradient
+const bool SIMULATING_SURFACE_TENSION = true;
+const int TENSION_ITTERATIONS = 2500 / 3;
+const double VELOCITY = 0;  // constant velocity with respect to the gradient
 
 // shifts all verticies inward at the end based on the surface normals of the scalar field (signed distance field)
 const bool SCALE_VERTS_INWARD = false;
@@ -87,7 +87,7 @@ double INVERSE_DELTA_X = 1 / (1);
 double INVERSE_DELTA_Y = 1 / (1);  // these are the inverses to save computation speed sense it's almost always divided by
 double INVERSE_DELTA_Z = 1 / (1);
 
-const double DT = 0.0055 * 0.1;
+const double DT = 0.0055 * 0.1 * 1.25 * 0.5;
 
 // auto gets certain perameters like the grid size and offset (returns the results and sets them for the run)
 const bool AUTO_SET = true;  // changes the offset and dt to fit the object into the specified grid size
@@ -1127,7 +1127,91 @@ int main()
         // simulating surface tension
         if (SIMULATING_SURFACE_TENSION)
         {
-            // adding simulation here (too lazy rn, add later)
+            CArray <double> normalsGrid = CArray <double>
+                (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2], 3);
+            CArray <double> signedDstFieldCopy = CArray <double>
+                (SAMPLING_SPACE_SIZE[0], SAMPLING_SPACE_SIZE[1], SAMPLING_SPACE_SIZE[2]);
+            
+            for (int i = 0; i < TENSION_ITTERATIONS; i++) {
+                for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0]; x_++) {
+                    for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1]; y_++) {
+                        for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2]; z_++) {
+                            signedDstFieldCopy(x_, y_, z_) = distanceField(x_, y_, z_);
+                        }
+                    }
+                }
+
+                for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0] - 2; x_++) {
+                    for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1] - 2; y_++) {
+                        for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2] - 2; z_++) {
+                            int x = x_ + 1; int y = y_ + 1; int z = z_ + 1;
+
+                            double difX = (distanceField(x + 1, y, z) - distanceField(x_, y, z)) * (0.5 * INVERSE_DELTA_X);
+                            double difY = (distanceField(x, y + 1, z) - distanceField(x, y_, z)) * (0.5 * INVERSE_DELTA_Y);
+                            double difZ = (distanceField(x, y, z + 1) - distanceField(x, y, z_)) * (0.5 * INVERSE_DELTA_Z);
+
+                            double length = difX*difX + difY*difY + difZ*difZ;
+                            if (length) {
+                                length = 1.0 / sqrt(length);
+                                normalsGrid(x_, y_, z_, 0) = difX * length;
+                                normalsGrid(x_, y_, z_, 1) = difY * length;
+                                normalsGrid(x_, y_, z_, 2) = difZ * length;
+                            } else {
+                                normalsGrid(x_, y_, z_, 0) = 0;
+                                normalsGrid(x_, y_, z_, 1) = 0;
+                                normalsGrid(x_, y_, z_, 2) = 0;
+                            }
+                        }
+                    }
+                }
+
+                for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0] - 4; x_++) {
+                    for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1] - 4; y_++) {
+                        for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2] - 4; z_++) {
+                            int x = x_ + 2; int y = y_ + 2; int z = z_ + 2;
+                            int x2 = x_ + 1; int y2 = y_ + 1; int z2 = z_ + 1;
+
+                            double kappa = (
+                                (normalsGrid(x, y2, z2, 0) - normalsGrid(x_, y2, z2, 0) * (0.5 * INVERSE_DELTA_X)) +
+                                (normalsGrid(x2, y, z2, 1) - normalsGrid(x2, y_, z2, 1) * (0.5 * INVERSE_DELTA_Y)) +
+                                (normalsGrid(x2, y2, z, 2) - normalsGrid(x2, y2, z_, 2) * (0.5 * INVERSE_DELTA_Z))
+                            );
+
+                            double dMinusX = (distanceField(x, y, z) - distanceField(x2, y, z)) * INVERSE_DELTA_X;
+                            double dMinusY = (distanceField(x, y, z) - distanceField(x, y2, z)) * INVERSE_DELTA_Y;
+                            double dMinusZ = (distanceField(x, y, z) - distanceField(x, y, z2)) * INVERSE_DELTA_Z;
+                            
+                            double dPlusX = (distanceField(x+1, y, z) - distanceField(x, y, z)) * INVERSE_DELTA_X;
+                            double dPlusY = (distanceField(x, y+1, z) - distanceField(x, y, z)) * INVERSE_DELTA_Y;
+                            double dPlusZ = (distanceField(x, y, z+1) - distanceField(x, y, z)) * INVERSE_DELTA_Z;
+
+                            double gradPlus = sqrt(
+                                pow(std::max(dMinusX, 0.0), 2.0) + pow(std::min(dPlusX, 0.0), 2.0) +
+                                pow(std::max(dMinusY, 0.0), 2.0) + pow(std::min(dPlusY, 0.0), 2.0) +
+                                pow(std::max(dMinusZ, 0.0), 2.0) + pow(std::min(dPlusZ, 0.0), 2.0)
+                            );
+                            double gradMinus = sqrt(
+                                pow(std::max(dPlusX, 0.0), 2.0) + pow(std::min(dMinusX, 0.0), 2.0) +
+                                pow(std::max(dPlusY, 0.0), 2.0) + pow(std::min(dMinusY, 0.0), 2.0) +
+                                pow(std::max(dPlusZ, 0.0), 2.0) + pow(std::min(dMinusZ, 0.0), 2.0)
+                            );
+
+                            signedDstFieldCopy(x, y, z) += DT * (
+                                std::max(kappa + VELOCITY, 0.0) * gradPlus +
+                                std::min(kappa + VELOCITY, 0.0) * gradMinus
+                            );
+                        }
+                    }
+                }
+
+                for (int x_ = 0; x_ < SAMPLING_SPACE_SIZE[0]; x_++) {
+                    for (int y_ = 0; y_ < SAMPLING_SPACE_SIZE[1]; y_++) {
+                        for (int z_ = 0; z_ < SAMPLING_SPACE_SIZE[2]; z_++) {
+                            distanceField(x_, y_, z_) = signedDstFieldCopy(x_, y_, z_);
+                        }
+                    }
+                }
+            }
         }
 
 
@@ -1157,7 +1241,7 @@ int main()
 
 
     // running the code through marching cubes & returning it as an stl file
-    MarchingCubes::MarchingCubesToSTL(distanceField, ISO_CONTOUR_LEVEL, 1.0, 1.0, 1.0);  // 1.0/INVERSE_DELTA_X, 1.0/INVERSE_DELTA_Y, 1.0/INVERSE_DELTA_Z (the distance field at this point has a scale represent 1x1x1 cells)
+    MarchingCubes::MarchingCubesToSTL(distanceField, ISO_CONTOUR_LEVEL * 0.5, 1.0, 1.0, 1.0);  // 1.0/INVERSE_DELTA_X, 1.0/INVERSE_DELTA_Y, 1.0/INVERSE_DELTA_Z (the distance field at this point has a scale represent 1x1x1 cells)
 
 
     return 0;
