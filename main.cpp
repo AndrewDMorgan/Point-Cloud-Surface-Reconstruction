@@ -42,7 +42,7 @@ const bool SAVE_TENSION_IMAGES = false;
 
 // loading a pcd file
 const bool LOAD_PCD = true;
-const std::string PCD_FILE = "dragon.pcd.ply";//"standfordBunny.pcd";  // "test2.pcd";  // "TestFile.pcd"  # 
+const std::string PCD_FILE = "vase.ply";//"standfordBunny.pcd";  // "test2.pcd";  // "TestFile.pcd"  # 
 const double POINTS_LOADED_PERCENT = 100.0 / (100.0);
 
 // test generators for certain shapes for testing
@@ -53,7 +53,7 @@ const bool GENERATE_CUBE = false;
 // https://people.math.sc.edu/Burkardt/data/pcd/p213.pcd: TestFile.pcd
 
 // the level at which the surface is defined as solid instead of void
-double ISO_CONTOUR_LEVEL = 3.5;
+double ISO_CONTOUR_LEVEL = 8.0;
 
 // octree setup settings
 const int OCTREE_POINT_BUFFER_SIZE = 25;
@@ -64,17 +64,17 @@ double CHUNK_SIZE = ISO_CONTOUR_LEVEL;
 const double SHELL_CHUNK_SIZE = 10;  // the chunk size for the points generated to represent the bubbly shell around the approximated objects
 //const int CHUNK_BUFFER_SIZE = 25;
 const int POINT_CLOUD_SIZE = 50000;
-const int SURFACE_POINTS_BUFFER_SIZE = 250000;
+const int SURFACE_POINTS_BUFFER_SIZE = 750000;
 
 // the size and positioning of the calculated area
-const int SAMPLING_SPACE_SIZE[3] = {250, 250, 250};  //[101, 101, 101]  # [500, 500, 500]#
+const int SAMPLING_SPACE_SIZE[3] = {200, 200, 200};  //[101, 101, 101]  # [500, 500, 500]#
 double SAMPLING_SPACE_OFFSET[3] = {0, 0, 0};
 
 // the maximum fill depth (to avoid any infinite loops in the case of an error in the code, part, or input settings)
 const int MAX_FILL_DEPTH = 100000000;  // 100 million. Hopefully that's not too little, the grids can get fairly large
 
 // the number of iterations of surface tension to smooth out the surface (the more the better the surface)
-const bool SIMULATING_SURFACE_TENSION = true;
+const bool SIMULATING_SURFACE_TENSION = false;
 const int TENSION_ITTERATIONS = 2500 / 3;
 const double VELOCITY = 0;  // constant velocity with respect to the gradient
 
@@ -392,6 +392,7 @@ private:
     public: void AddChunk (int indexX, int indexY, int indexZ, double pointX, double pointY, double pointZ)
     {
         // getting the number of stacked points in the chunk
+        //std::cout<<"Index: " << indexX << ", " << indexY << ", " << indexZ << "    point: " << pointX << ", " << pointY << ", " << pointZ << "    small bound: " << smallBoundX << ", " << smallBoundY << ", " << smallBoundZ << "   size: " << gridSizeX << ", " << gridSizeY << ", " << gridSizeZ << std::endl;
         int numberStacked = chunkStackedSize(indexX, indexY, indexZ);
         chunkStackedSize(indexX, indexY, indexZ) += 1;
         
@@ -421,29 +422,29 @@ ChunkGrid GenerateChunks (CArray <double> &points, double chunkSize, int numPoin
     for (int i = 0; i < numPoints; i++)
     {
         // finding the minimum values
-        smallBoundX = Min(points(i, 0), smallBoundX);
-        smallBoundY = Min(points(i, 1), smallBoundX);
-        smallBoundZ = Min(points(i, 2), smallBoundX);
+        smallBoundX = std::min <double> (points(i, 0), smallBoundX);
+        smallBoundY = std::min <double> (points(i, 1), smallBoundX);
+        smallBoundZ = std::min <double> (points(i, 2), smallBoundX);
 
         // finding the(int)  maximum values
-        largeBoundX = Max(points(i, 0), largeBoundX);
-        largeBoundY = Max(points(i, 1), largeBoundX);
-        largeBoundZ = Max(points(i, 2), largeBoundX);
+        largeBoundX = std::max <double> (points(i, 0), largeBoundX);
+        largeBoundY = std::max <double> (points(i, 1), largeBoundX);
+        largeBoundZ = std::max <double> (points(i, 2), largeBoundX);
     }
 
     // bringing the bounds to whole numbers
-    smallBoundX = std::floor(smallBoundX);
-    smallBoundY = std::floor(smallBoundY);
-    smallBoundZ = std::floor(smallBoundZ);
+    smallBoundX = std::floor(smallBoundX) - 21;
+    smallBoundY = std::floor(smallBoundY) - 21;  // no idea why - 21 is necessary?
+    smallBoundZ = std::floor(smallBoundZ) - 21;
 
     largeBoundX = std::ceil(largeBoundX);
     largeBoundY = std::ceil(largeBoundY);
     largeBoundZ = std::ceil(largeBoundZ);
 
     // finding the grid size
-    int gridSizeX = (int) std::ceil(abs(largeBoundX - smallBoundX) / chunkSize) + 9;
-    int gridSizeY = (int) std::ceil(abs(largeBoundY - smallBoundY) / chunkSize) + 9;
-    int gridSizeZ = (int) std::ceil(abs(largeBoundZ - smallBoundZ) / chunkSize) + 9;
+    int gridSizeX = (int) std::ceil(abs(largeBoundX - smallBoundX) / chunkSize) + 18;
+    int gridSizeY = (int) std::ceil(abs(largeBoundY - smallBoundY) / chunkSize) + 18;
+    int gridSizeZ = (int) std::ceil(abs(largeBoundZ - smallBoundZ) / chunkSize) + 18;
 
     // creating the grid
     int bufferSize = gridSizeX * gridSizeY * gridSizeZ;  // the maximum number of possible points per chunk
@@ -840,14 +841,14 @@ int main()
             double newIsoContourLevel = (newDeltaScaleX + newDeltaScaleY + newDeltaScaleZ) / 3 * ISO_CONTOUR_LEVEL;
             
             // updating the cloud size
-            cloudSizeX += newIsoContourLevel * 4;
-            cloudSizeY += newIsoContourLevel * 4;
-            cloudSizeZ += newIsoContourLevel * 4;
+            cloudSizeX += newIsoContourLevel * 9;
+            cloudSizeY += newIsoContourLevel * 9;
+            cloudSizeZ += newIsoContourLevel * 9;
 
             // updating the grid offset and delta position scaling
-            double newGridOffsetX = lowestX - newIsoContourLevel * 2;
-            double newGridOffsetY = lowestY - newIsoContourLevel * 2;
-            double newGridOffsetZ = lowestZ - newIsoContourLevel * 2;
+            double newGridOffsetX = lowestX - newIsoContourLevel * 4.5;
+            double newGridOffsetY = lowestY - newIsoContourLevel * 4.5;
+            double newGridOffsetZ = lowestZ - newIsoContourLevel * 4.5;
 
             newDeltaScaleX = cloudSizeX / SAMPLING_SPACE_SIZE[0];
             newDeltaScaleY = cloudSizeY / SAMPLING_SPACE_SIZE[1];
@@ -877,8 +878,6 @@ int main()
             std::cout << "sampling offset: " << SAMPLING_SPACE_OFFSET[0] << ", " << SAMPLING_SPACE_OFFSET[1] << ", " << SAMPLING_SPACE_OFFSET[2] << "\nIso: " << ISO_CONTOUR_LEVEL << "     deltas: " << 1/INVERSE_DELTA_X << ", " << 1/INVERSE_DELTA_Y << ", " << 1/INVERSE_DELTA_Z << "\nCloud size: " << cloudSizeX << ", " << cloudSizeY << ", " << cloudSizeZ << std::endl;
             std::cout << "lowest: " << lowestX << ", " << lowestY << ", " << lowestZ << "\nHighest: " << largestX << ", " << largestY << ", " << largestZ << std::endl;
             std::cout << "Chunk size: " << CHUNK_SIZE << std::endl;
-
-
 
             //Octree octree = Octree(pointCloud, pointCloudIndex, cloudSizeX, cloudSizeY, cloudSizeZ, SAMPLING_SPACE_OFFSET[0], SAMPLING_SPACE_OFFSET[1], SAMPLING_SPACE_OFFSET[2], 10, 25);
             //octree.SubDivide();  // somehow this is all working

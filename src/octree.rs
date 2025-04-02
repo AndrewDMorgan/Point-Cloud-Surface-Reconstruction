@@ -842,9 +842,10 @@ impl Octree {
     }
 
     pub fn GetLeafNodeReverseIndex (&self, leafNode: usize) -> usize {
-        self.leafNodes.binary_search(&leafNode).expect("failed to get the point")
-        /*BinarySearch(&self.leafNodes, &leafNode).  // not sure if this is working?
-            expect("Failed to get point")*/
+        //self.leafNodes.binary_search(&leafNode).expect("failed to get the point")
+        //*
+        BinarySearch(&self.leafNodes, &leafNode).  // not sure if this is working?
+            expect("Failed to get point")  // */
     }
 
     // does this need to be public?

@@ -453,7 +453,7 @@ fn main() {
                 setupParameters.InverseDeltaX = 1.0 / setupParameters.InverseDeltaX;
                 setupParameters.InverseDeltaY = 1.0 / setupParameters.InverseDeltaY;
                 setupParameters.InverseDeltaZ = 1.0 / setupParameters.InverseDeltaZ;
-
+                
                 setupParameters.SampleSpaceBounds = [
                     cloudSizeX, cloudSizeY, cloudSizeZ
                 ];
